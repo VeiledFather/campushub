@@ -25,3 +25,5 @@ backup_signup_*/
 # OS/editor files
 .DS_Store
 .vscode/
+
+app/config.py.backup_*
