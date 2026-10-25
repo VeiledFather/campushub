@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CampusHub · Administration</p>
+    <h1>Event Review Dashboard</h1>
+    <p>Review submitted events before they are published.</p>
+  </div>
+  <a class="button button-quiet" href="{{ url_for('events.index') }}">All events</a>
+</section>
+
+<section class="panel">
+  <div class="section-heading">
+    <h2>Awaiting review</h2>
+    <span>{{ events|length }} event{{ '' if events|length == 1 else 's' }}</span>
+  </div>
+
+  {% if events %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Event</th>
+            <th>Organizer</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Review</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for event in events %}
+          <tr>
+            <td>
+              <strong>{{ event.title }}</strong>
+              {% if event.venue %}<br><small>{{ event.venue.name }}</small>{% endif %}
+            </td>
+            <td>
+              {% if event.host_user %}
+                {{ event.host_user.name if event.host_user.name is defined else event.host_user.email }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>{{ event.start_time.strftime('%d %b %Y, %I:%M %p') if event.start_time else 'Not scheduled' }}</td>
+            <td><span class="status-badge">{{ event.status|replace('_', ' ')|title }}</span></td>
+            <td>
+              <a class="button button-quiet" href="{{ url_for('events.detail', event_id=event.id) }}">Review event</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <h3>All caught up!</h3>
+      <p>There are no events waiting for review right now.</p>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

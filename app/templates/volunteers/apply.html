@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Volunteer Application | CampusHub{% endblock %}
+{% block content %}
+<section class="form-card">
+  <p class="eyebrow">VOLUNTEER PORTAL</p>
+  <h1>Apply to volunteer</h1>
+  <h2>{{ event.title }}</h2>
+  <p>{{ event.description }}</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="message">Why would you like to volunteer? (optional)</label>
+    <textarea id="message" name="message" maxlength="2000" rows="5" placeholder="Tell the organizers a little about your interest..."></textarea>
+    <button class="button button-primary" type="submit">Submit application</button>
+  </form>
+</section>
+{% endblock %}

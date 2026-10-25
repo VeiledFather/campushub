@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · CampusHub{% endblock %}
+{% block content %}
+<section class="dashboard-welcome">
+  <div>
+    <div class="eyebrow">YOUR CAMPUS SPACE</div>
+    <h1>Hey, {{ current_user.full_name.split()[0] }}<span class="gradient-text">.</span></h1>
+    <p>Welcome back. Here's your CampusHub at a glance.</p>
+  </div>
+  <div class="dashboard-avatar">{{ current_user.full_name[:1]|upper }}</div>
+</section>
+
+<section class="dashboard-stats">
+  <article class="stat-card">
+    <span class="stat-icon">✳</span>
+    <span class="stat-label">CAMPUS EVENTS</span>
+    <strong>{{ stats.events }}</strong>
+    <small>Events in the system</small>
+  </article>
+  <article class="stat-card">
+    <span class="stat-icon">↗</span>
+    <span class="stat-label">YOUR REGISTRATIONS</span>
+    <strong>{{ stats.registrations }}</strong>
+    <small>Active events you've joined</small>
+  </article>
+  {% if stats.users is not none %}
+  <article class="stat-card">
+    <span class="stat-icon">◎</span>
+    <span class="stat-label">CAMPUS COMMUNITY</span>
+    <strong>{{ stats.users }}</strong>
+    <small>Registered accounts</small>
+  </article>
+  {% endif %}
+</section>
+
+{% if operations is not none %}
+<section class="dashboard-panel">
+  <div class="eyebrow">EVENT OPERATIONS</div>
+  <h2>Management overview</h2>
+  <p class="muted">Metrics for events you manage{% if current_user.role in ['admin', 'super_admin', 'developer'] %}, across CampusHub{% endif %}.</p>
+
+  <section class="dashboard-stats">
+    <article class="stat-card">
+      <span class="stat-label">MANAGED EVENTS</span>
+      <strong>{{ operations.events }}</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-label">ACTIVE REGISTRATIONS</span>
+      <strong>{{ operations.registrations }}</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-label">CHECK-INS</span>
+      <strong>{{ operations.checkins }}</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-label">VOLUNTEERS</span>
+      <strong>{{ operations.volunteers }}</strong>
+      <small>{{ operations.pending_volunteers }} awaiting review</small>
+    </article>
+  </section>
+
+  <h2>Event capacity</h2>
+  <p>
+    {% if operations.unlimited_capacity_events %}
+      {{ operations.unlimited_capacity_events }} event(s) have no fixed participant limit.
+    {% endif %}
+    {{ operations.remaining_capacity }} total remaining places across events with fixed capacity.
+  </p>
+
+  <h2>Your event breakdown</h2>
+  {% if event_rows %}
+  <div style="overflow-x:auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Event</th>
+          <th>Status</th>
+          <th>Registrations</th>
+          <th>Check-ins</th>
+          <th>Volunteers</th>
+          <th>Places left</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in event_rows %}
+        <tr>
+          <td><a href="{{ url_for('events.detail', event_id=row.event.id) }}">{{ row.event.title }}</a></td>
+          <td>{{ row.event.status|replace('_', ' ')|title }}</td>
+          <td>{{ row.registrations }}</td>
+          <td>{{ row.checkins }}</td>
+          <td>{{ row.volunteers }}{% if row.pending_volunteers %}<small> ({{ row.pending_volunteers }} pending)</small>{% endif %}</td>
+          <td>{% if row.remaining_capacity is none %}No limit{% else %}{{ row.remaining_capacity }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No events are currently assigned to your account.</p>
+  {% endif %}
+
+  <p>
+    <a class="button button-primary" href="{{ url_for('volunteers.review') }}">Review volunteers</a>
+    <a class="button button-secondary" href="{{ url_for('events.create') }}">Create event</a>
+  </p>
+</section>
+{% endif %}
+
+<section class="dashboard-grid">
+  <article class="dashboard-panel">
+    <div class="eyebrow">YOUR PROFILE</div>
+    <h2>Account details</h2>
+    <div class="profile-row"><span>Name</span><strong>{{ current_user.full_name }}</strong></div>
+    <div class="profile-row"><span>Email</span><strong>{{ current_user.email }}</strong></div>
+    <div class="profile-row"><span>Role</span><strong>{{ current_user.role|replace('_', ' ')|title }}</strong></div>
+    <div class="profile-row"><span>Account</span><strong class="status-active">● Active</strong></div>
+  </article>
+  <article class="dashboard-panel evai-panel">
+    <div class="evai-symbol">✳</div>
+    <div class="eyebrow">YOUR AI EVENT ASSISTANT</div>
+    <h2>Meet EvAi.</h2>
+    <p>Smarter event planning, schedule clash detection, and campus ideas are on the roadmap.</p>
+    <span class="coming-soon">PLANNER IN DEVELOPMENT</span>
+  </article>
+</section>
+
+<section class="dashboard-panel role-panel">
+  <div class="eyebrow">YOUR WORKSPACE</div>
+  <h2>{{ current_user.role|replace('_', ' ')|title }} workspace</h2>
+  <p class="muted">Your account is securely signed in. Role-specific tools are available based on your permissions.</p>
+</section>
+{% endblock %}

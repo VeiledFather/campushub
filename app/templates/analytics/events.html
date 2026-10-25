@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Event Analytics · CampusHub{% endblock %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CampusHub · Insights</p>
+    <h1>Event Analytics</h1>
+    <p>Event performance, registrations, and verified QR check-ins.</p>
+  </div>
+  <a class="button button-quiet" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+</section>
+
+<section class="dashboard-stats">
+  <article class="dashboard-panel">
+    <p class="muted">Total events</p>
+    <h2>{{ total_events }}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Published</p>
+    <h2>{{ published_events }}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Awaiting approval</p>
+    <h2>{{ pending_events }}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Cancelled</p>
+    <h2>{{ cancelled_events }}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Active registrations</p>
+    <h2>{{ total_registrations }}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">QR check-ins</p>
+    <h2>{{ total_checkins }}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Check-ins / registrations</p>
+    <h2>{{ attendance_rate }}%</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Average rating</p>
+    <h2>{{ average_rating if average_rating is not none else '—' }}{% if average_rating is not none %}/5{% endif %}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Reviews</p>
+    <h2>{{ total_reviews }}</h2>
+  </article>
+  <article class="dashboard-panel">
+    <p class="muted">Written feedback</p>
+    <h2>{{ total_feedback }}</h2>
+  </article>
+</section>
+
+<section class="dashboard-panel">
+  <div class="section-heading">
+    <h2>Event performance</h2>
+    <span>{{ event_rows|length }} events</span>
+  </div>
+
+  {% if event_rows %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Event</th>
+          <th>Status</th>
+          <th>Start date</th>
+          <th>Registrations</th>
+          <th>QR check-ins</th>
+          <th>Attendance rate</th>
+          <th>Average rating</th>
+          <th>Reviews</th>
+          <th>Written feedback</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event, registrations, checkins, event_rating, review_count, feedback_count in event_rows %}
+        <tr>
+          <td><a href="{{ url_for('events.detail', event_id=event.id) }}">{{ event.title }}</a></td>
+          <td>{{ event.status|replace('_', ' ')|title }}</td>
+          <td>{{ event.start_time.strftime('%d %b %Y') if event.start_time else '—' }}</td>
+          <td>{{ registrations }}</td>
+          <td>{{ checkins }}</td>
+          <td>{{ ((checkins / registrations) * 100)|round(1) if registrations else 0 }}%</td>
+          <td>{{ event_rating if event_rating is not none else '—' }}{% if event_rating is not none %}/5{% endif %}</td>
+          <td>{{ review_count }}</td>
+          <td>{{ feedback_count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <h3>No events yet</h3>
+    <p>Event performance will appear here when events are created.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

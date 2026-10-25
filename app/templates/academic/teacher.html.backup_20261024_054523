@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Teacher Academic Management · CampusHub{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CAMPUSHUB · FACULTY WORKSPACE</p>
+    <h1>Academic Management</h1>
+    <p class="muted">Manage student enrollment in your assigned homeroom batch.</p>
+  </div>
+</section>
+
+{% if error_message %}
+  <section class="card"><p>{{ error_message }}</p></section>
+{% elif batch %}
+  <section class="stats-grid">
+    <article class="stat-card"><span>Assigned batch</span><strong>{{ batch.name }}</strong></article>
+    <article class="stat-card"><span>Department</span><strong>{{ batch.department.name }}</strong></article>
+    <article class="stat-card"><span>Students</span><strong>{{ students|length }}</strong></article>
+  </section>
+
+  {% if batch.is_active %}
+  <section class="card">
+    <h2>Manually enroll a student</h2>
+    <p class="muted">Creates the student account and profile together and assigns the student to your batch.</p>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Student full name
+        <input name="full_name" maxlength="160" required autocomplete="name">
+      </label>
+      <label>Student email
+        <input type="email" name="email" maxlength="255" required autocomplete="email">
+      </label>
+      <label>Campus ID
+        <input name="campus_id" maxlength="80" required>
+      </label>
+      <label>College ID
+        <input name="college_id" maxlength="80" required>
+      </label>
+      <button class="button" type="submit">Create student account and enroll</button>
+    </form>
+    <p class="muted">New IDs remain unverified until an administrator confirms them. The administrator must send the student a password-setup link.</p>
+  </section>
+  {% else %}
+  <section class="card"><p>This batch is inactive. New enrollments are disabled.</p></section>
+  {% endif %}
+
+  <section class="card">
+    <h2>Your batch roster</h2>
+    {% if students %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Student</th><th>Email</th><th>Campus ID</th><th>College ID</th><th>Verification</th><th>Account</th></tr></thead>
+      <tbody>
+      {% for student in students %}
+        <tr>
+          <td>{{ student.user.full_name }}</td>
+          <td>{{ student.user.email }}</td>
+          <td>{{ student.campus_id }}</td>
+          <td>{{ student.college_id }}</td>
+          <td>{{ "Verified" if student.id_verified else "Unverified" }}</td>
+          <td>{{ "Active" if student.user.is_active else "Inactive" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+      <p class="muted">No students are assigned to this batch yet.</p>
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}

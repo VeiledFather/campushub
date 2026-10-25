@@ -1,0 +1,338 @@
+from flask import Blueprint, render_template
+from flask_login import current_user, login_required
+
+from app.models import (
+    Certificate,
+    Announcement,
+    Event,
+    Registration,
+    Student,
+    Ticket,
+    User,
+    VolunteerApplication,
+)
+
+main_bp = Blueprint("main", __name__)
+
+ADMIN_ROLES = {"admin", "super_admin", "developer"}
+MANAGER_ROLES = ADMIN_ROLES | {"organizer", "teacher"}
+
+
+@main_bp.get("/")
+def home():
+    events = (
+        Event.query.filter_by(status="published", is_public=True)
+        .order_by(Event.created_at.desc())
+        .limit(6)
+        .all()
+    )
+    announcements = (
+        Announcement.query.order_by(Announcement.created_at.desc())
+        .limit(3)
+        .all()
+    )
+    return render_template(
+        "home.html", events=events, announcements=announcements
+    )
+
+
+
+
+@main_bp.get("/hall-of-fame")
+@login_required
+def hall_of_fame():
+    from sqlalchemy import func, or_
+
+    # Count verified check-ins and distinct events attended per student.
+    attendance = (
+        db.session.query(
+            Registration.student_id.label("student_id"),
+            func.count(Ticket.id).label("check_ins"),
+            func.count(
+                func.distinct(Registration.event_id)
+            ).label("events_attended"),
+        )
+        .join(Ticket, Ticket.registration_id == Registration.id)
+        .filter(
+            Ticket.checked_in_at.isnot(None),
+            Registration.status != "cancelled",
+        )
+        .group_by(Registration.student_id)
+        .subquery()
+    )
+
+    # Count approved volunteer assignments only for completed events.
+    volunteering = (
+        db.session.query(
+            Student.id.label("student_id"),
+            func.count(VolunteerApplication.id).label(
+                "volunteer_contributions"
+            ),
+        )
+        .join(
+            VolunteerApplication,
+            VolunteerApplication.user_id == Student.user_id,
+        )
+        .join(Event, Event.id == VolunteerApplication.event_id)
+        .filter(
+            VolunteerApplication.status == "approved",
+            Event.status == "completed",
+        )
+        .group_by(Student.id)
+        .subquery()
+    )
+
+    # Count certificates actually issued.
+    certificates = (
+        db.session.query(
+            Certificate.student_id.label("student_id"),
+            func.count(Certificate.id).label("certificates_earned"),
+        )
+        .group_by(Certificate.student_id)
+        .subquery()
+    )
+
+    check_ins = func.coalesce(attendance.c.check_ins, 0)
+    events_attended = func.coalesce(attendance.c.events_attended, 0)
+    volunteer_contributions = func.coalesce(
+        volunteering.c.volunteer_contributions, 0
+    )
+    certificates_earned = func.coalesce(
+        certificates.c.certificates_earned, 0
+    )
+
+    rankings = (
+        db.session.query(
+            Student.id.label("student_id"),
+            User.full_name.label("student_name"),
+            check_ins.label("check_ins"),
+            events_attended.label("events_attended"),
+            volunteer_contributions.label("volunteer_contributions"),
+            certificates_earned.label("certificates_earned"),
+        )
+        .join(User, User.id == Student.user_id)
+        .outerjoin(attendance, attendance.c.student_id == Student.id)
+        .outerjoin(volunteering, volunteering.c.student_id == Student.id)
+        .outerjoin(certificates, certificates.c.student_id == Student.id)
+        .filter(
+            or_(
+                check_ins > 0,
+                volunteer_contributions > 0,
+                certificates_earned > 0,
+            )
+        )
+        .order_by(
+            check_ins.desc(),
+            events_attended.desc(),
+            volunteer_contributions.desc(),
+            certificates_earned.desc(),
+            User.full_name.asc(),
+        )
+        .limit(100)
+        .all()
+    )
+
+    return render_template("hall_of_fame.html", rankings=rankings)
+
+
+@main_bp.get("/analytics")
+@login_required
+def event_analytics():
+    from sqlalchemy import func
+
+    if current_user.role not in ADMIN_ROLES:
+        from flask import abort
+        abort(403)
+
+    total_events = Event.query.count()
+    published_events = Event.query.filter_by(status="published").count()
+    pending_events = Event.query.filter(
+        Event.status.in_(("pending_approval", "pending"))
+    ).count()
+    cancelled_events = Event.query.filter_by(status="cancelled").count()
+
+    total_registrations = Registration.query.filter(
+        Registration.status != "cancelled"
+    ).count()
+
+    total_checkins = (
+        Ticket.query.join(Ticket.registration)
+        .filter(
+            Ticket.checked_in_at.isnot(None),
+            Registration.status != "cancelled",
+        )
+        .count()
+    )
+
+    attendance_rate = (
+        round(total_checkins / total_registrations * 100, 1)
+        if total_registrations else 0
+    )
+
+    # Registration and attendance totals grouped by event.
+    rows = (
+        Event.query
+        .outerjoin(Registration, Registration.event_id == Event.id)
+        .outerjoin(Ticket, Ticket.registration_id == Registration.id)
+        .with_entities(
+            Event,
+            func.count(
+                func.distinct(
+                    func.nullif(
+                        func.case(
+                            (Registration.status != "cancelled", Registration.id),
+                            else_=None,
+                        ),
+                        None,
+                    )
+                )
+            ).label("registrations"),
+            func.count(
+                func.distinct(
+                    func.case(
+                        (
+                            (Ticket.checked_in_at.isnot(None))
+                            & (Registration.status != "cancelled"),
+                            Ticket.id,
+                        ),
+                        else_=None,
+                    )
+                )
+            ).label("checkins"),
+        )
+        .group_by(Event.id)
+        .order_by(Event.start_time.desc())
+        .all()
+    )
+
+    return render_template(
+        "analytics/events.html",
+        total_events=total_events,
+        published_events=published_events,
+        pending_events=pending_events,
+        cancelled_events=cancelled_events,
+        total_registrations=total_registrations,
+        total_checkins=total_checkins,
+        attendance_rate=attendance_rate,
+        event_rows=rows,
+    )
+
+@main_bp.get("/dashboard")
+@login_required
+def dashboard():
+    user_role = current_user.role
+
+    stats = {
+        "users": User.query.count() if user_role in ADMIN_ROLES else None,
+        "events": Event.query.count(),
+        "registrations": Registration.query.join(
+            Registration.student
+        ).filter(
+            Registration.student.has(user_id=current_user.id)
+        ).filter(
+            Registration.status != "cancelled"
+        ).count(),
+    }
+
+    event_rows = []
+    operations = None
+
+    if user_role in ADMIN_ROLES:
+        managed_events = Event.query.order_by(Event.start_time.asc()).all()
+    elif user_role in {"organizer", "teacher"}:
+        managed_events = (
+            Event.query.filter_by(host_user_id=current_user.id)
+            .order_by(Event.start_time.asc())
+            .all()
+        )
+    else:
+        managed_events = []
+
+    if user_role in MANAGER_ROLES:
+        operations = {
+            "events": len(managed_events),
+            "registrations": 0,
+            "checkins": 0,
+            "volunteers": 0,
+            "pending_volunteers": 0,
+            "remaining_capacity": 0,
+            "unlimited_capacity_events": 0,
+        }
+
+        for event in managed_events:
+            active_registrations = Registration.query.filter_by(
+                event_id=event.id
+            ).filter(Registration.status != "cancelled").count()
+
+            checkins = (
+                Ticket.query.join(Ticket.registration)
+                .filter(
+                    Registration.event_id == event.id,
+                    Ticket.checked_in_at.isnot(None),
+                )
+                .count()
+            )
+
+            volunteer_count = VolunteerApplication.query.filter_by(
+                event_id=event.id
+            ).count()
+
+            pending_count = VolunteerApplication.query.filter_by(
+                event_id=event.id,
+                status="pending",
+            ).count()
+
+            if event.max_participants is None:
+                remaining = None
+                operations["unlimited_capacity_events"] += 1
+            else:
+                remaining = max(
+                    0, event.max_participants - active_registrations
+                )
+                operations["remaining_capacity"] += remaining
+
+            operations["registrations"] += active_registrations
+            operations["checkins"] += checkins
+            operations["volunteers"] += volunteer_count
+            operations["pending_volunteers"] += pending_count
+
+            event_rows.append({
+                "event": event,
+                "registrations": active_registrations,
+                "checkins": checkins,
+                "volunteers": volunteer_count,
+                "pending_volunteers": pending_count,
+                "remaining_capacity": remaining,
+            })
+
+    volunteer_applications = []
+    volunteer_stats = None
+
+    if user_role == "student":
+        volunteer_applications = (
+            VolunteerApplication.query
+            .filter_by(user_id=current_user.id)
+            .order_by(VolunteerApplication.created_at.desc())
+            .all()
+        )
+        volunteer_stats = {
+            "total": len(volunteer_applications),
+            "pending": sum(
+                app.status == "pending" for app in volunteer_applications
+            ),
+            "approved": sum(
+                app.status == "approved" for app in volunteer_applications
+            ),
+            "rejected": sum(
+                app.status == "rejected" for app in volunteer_applications
+            ),
+        }
+
+    return render_template(
+        "dashboard.html",
+        stats=stats,
+        operations=operations,
+        event_rows=event_rows,
+        volunteer_applications=volunteer_applications,
+        volunteer_stats=volunteer_stats,
+    )

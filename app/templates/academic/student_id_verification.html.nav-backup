@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}Verify Student ID · CampusHub{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CAMPUSHUB · STUDENT SERVICES</p>
+    <h1>Student ID Verification</h1>
+    <p class="muted">Scan your card, photograph it, and send it to your assigned homeroom teacher.</p>
+  </div>
+</section>
+
+<section class="stats-grid">
+  <article class="stat-card"><span>Student</span><strong>{{ current_user.full_name }}</strong></article>
+  <article class="stat-card"><span>Homeroom batch</span><strong>{{ batch.name if batch else "Not assigned" }}</strong></article>
+  <article class="stat-card"><span>Verification</span><strong>{{ "Verified" if student.id_verified else "Not verified" }}</strong></article>
+</section>
+
+<section class="card">
+  <h2>Submit your ID card</h2>
+  {% if student.id_verified %}
+    <p>Your student ID has already been verified.</p>
+  {% else %}
+    <p class="muted">Scan the QR/barcode printed on your card, then take a clear photo of the physical card. Scanning does not automatically verify your ID.</p>
+    <div id="student-id-camera" style="max-width:520px;width:100%;"></div>
+    <div class="d-flex flex-wrap gap-2 my-3">
+      <button class="btn btn-primary" type="button" id="student-id-start">Start camera scanner</button>
+      <button class="btn btn-outline-secondary" type="button" id="student-id-stop" disabled>Stop scanner</button>
+    </div>
+    <p id="student-id-status" role="status" aria-live="polite">Scanner is off. You can type the ID manually.</p>
+    <section class="card mt-3">
+      <h3>Read printed text from your ID card</h3>
+      <p class="muted">Use OCR to read the printed text. Review the result carefully; OCR can make mistakes.</p>
+      <video id="student-id-ocr-video" autoplay playsinline
+             style="display:none;width:100%;max-width:520px;border-radius:12px;"></video>
+      <canvas id="student-id-ocr-canvas" hidden></canvas>
+      <div class="d-flex flex-wrap gap-2 my-3">
+        <button class="btn btn-outline-primary" type="button" id="student-id-ocr-start">Start text scanner</button>
+        <button class="btn btn-primary" type="button" id="student-id-ocr-capture" disabled>Capture and read text</button>
+        <button class="btn btn-outline-secondary" type="button" id="student-id-ocr-stop" disabled>Stop text scanner</button>
+      </div>
+      <p id="student-id-ocr-status" role="status" aria-live="polite">Text scanner is off.</p>
+      <label for="student-id-ocr-result">Recognized card text</label>
+      <textarea class="form-control" id="student-id-ocr-result" rows="4" readonly
+                placeholder="Recognized card text will appear here."></textarea>
+      <div class="d-flex flex-wrap gap-2 mt-2">
+        <button class="btn btn-outline-primary" type="button" id="student-id-ocr-use" disabled>Use selected text as ID</button>
+        <button class="btn btn-outline-secondary" type="button" id="student-id-ocr-use-batch" disabled>Use selected text as batch code</button>
+      </div>
+      <p class="muted">Select only the relevant text in the recognized result before choosing a button.</p>
+    </section>
+
+
+    <form method="post" enctype="multipart/form-data" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="student-scanned-id">Decoded Campus ID / College ID</label>
+      <input class="form-control" id="student-scanned-id" name="scanned_id"
+             maxlength="80" required autocomplete="off"
+             placeholder="Scan a code or type the exact ID">
+      <label for="student-scanned-batch-code">Batch code printed on the ID card</label>
+      <input class="form-control" id="student-scanned-batch-code" name="batch_code"
+             maxlength="40" required autocomplete="off" autocapitalize="characters"
+             placeholder="Enter the exact batch code">
+      <label for="student-card-file">Photo of the physical student ID card</label>
+      <input class="form-control" id="student-card-file" name="card_image"
+             type="file" accept="image/png,image/jpeg,image/webp" capture="environment" required>
+      <img id="student-card-preview" alt="ID card preview"
+           style="display:none;max-width:100%;max-height:300px;object-fit:contain;margin-top:12px;">
+      <p class="muted">PNG, JPG or WEBP · Maximum 5 MB. The image is visible to your assigned homeroom teacher for review.</p>
+      <button class="btn btn-primary" type="submit">Submit for teacher review</button>
+    </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>My verification requests</h2>
+  {% if submissions %}
+    {% for item in submissions %}
+      <article class="card mb-3">
+        <p><strong>Status:</strong> {{ item.status|title }}</p>
+        <p><strong>Submitted ID:</strong> {{ item.scanned_id }}</p>
+        <p><strong>Submitted:</strong> {{ item.created_at.strftime("%d %b %Y, %I:%M %p") }}</p>
+        {% if item.review_reason %}<p><strong>Teacher's reason:</strong> {{ item.review_reason }}</p>{% endif %}
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">You haven't submitted an ID verification request yet.</p>
+  {% endif %}
+</section>
+
+{% if not student.id_verified %}
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(() => {
+  const start = document.getElementById("student-id-start");
+  const stop = document.getElementById("student-id-stop");
+  const status = document.getElementById("student-id-status");
+  const input = document.getElementById("student-scanned-id");
+  const fileInput = document.getElementById("student-card-file");
+  const preview = document.getElementById("student-card-preview");
+  let scanner = null;
+  let running = false;
+
+  function message(text) { status.textContent = text; }
+
+  async function stopScanner() {
+    if (scanner && running) {
+      try { await scanner.stop(); } catch (_) {}
+    }
+    if (scanner) {
+      try { await scanner.clear(); } catch (_) {}
+    }
+    scanner = null;
+    running = false;
+    start.disabled = false;
+    stop.disabled = true;
+  }
+
+  start.addEventListener("click", async () => {
+    if (!window.Html5Qrcode) {
+      message("Scanner library failed to load. You can type your ID manually.");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      message("Camera access requires HTTPS or localhost. Manual entry is available.");
+      return;
+    }
+    start.disabled = true;
+    try {
+      scanner = new Html5Qrcode("student-id-camera");
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 180 } },
+        async (decodedText) => {
+          if (!decodedText || !decodedText.trim()) return;
+          input.value = decodedText.trim();
+          message("Code scanned. Take or select a clear photo of your physical ID card, then submit.");
+          await stopScanner();
+        },
+        () => {}
+      );
+      running = true;
+      stop.disabled = false;
+      message("Camera active. Hold your ID QR code or barcode inside the frame.");
+    } catch (_) {
+      scanner = null;
+      start.disabled = false;
+      message("Could not start camera. Check browser permission and use HTTPS or localhost.");
+    }
+  });
+
+  stop.addEventListener("click", async () => {
+    await stopScanner();
+    message("Scanner stopped.");
+  });
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (!file) {
+      preview.style.display = "none";
+      preview.removeAttribute("src");
+      return;
+    }
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = "block";
+  });
+
+
+  // OCR camera: reads printed text, but never verifies an ID automatically.
+  const ocrStart = document.getElementById("student-id-ocr-start");
+  const ocrCapture = document.getElementById("student-id-ocr-capture");
+  const ocrStop = document.getElementById("student-id-ocr-stop");
+  const ocrVideo = document.getElementById("student-id-ocr-video");
+  const ocrCanvas = document.getElementById("student-id-ocr-canvas");
+  const ocrResult = document.getElementById("student-id-ocr-result");
+  const ocrStatus = document.getElementById("student-id-ocr-status");
+  const ocrUse = document.getElementById("student-id-ocr-use");
+  const ocrUseBatch = document.getElementById("student-id-ocr-use-batch");
+  const batchCodeInput = document.getElementById("student-scanned-batch-code");
+  let ocrStream = null;
+
+  async function stopOcrCamera() {
+    if (ocrStream) ocrStream.getTracks().forEach(track => track.stop());
+    ocrStream = null;
+    ocrVideo.srcObject = null;
+    ocrVideo.style.display = "none";
+    ocrCapture.disabled = true;
+    ocrStop.disabled = true;
+    ocrStart.disabled = false;
+  }
+
+  ocrStart.addEventListener("click", async () => {
+    if (!window.Tesseract) {
+      ocrStatus.textContent = "OCR library did not load. Check your internet connection and retry.";
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      ocrStatus.textContent = "Camera requires HTTPS or localhost. You can still use the QR scanner or enter the ID manually.";
+      return;
+    }
+    try {
+      ocrStart.disabled = true;
+      ocrStatus.textContent = "Requesting camera permission...";
+      ocrStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      });
+      ocrVideo.srcObject = ocrStream;
+      ocrVideo.style.display = "block";
+      await ocrVideo.play();
+      ocrCapture.disabled = false;
+      ocrStop.disabled = false;
+      ocrStatus.textContent = "Camera active. Hold the card steady and capture the text.";
+    } catch (error) {
+      await stopOcrCamera();
+      ocrStatus.textContent = "Could not open camera. Allow camera permission and use HTTPS or localhost.";
+    }
+  });
+
+  ocrCapture.addEventListener("click", async () => {
+    if (!ocrStream || !ocrVideo.videoWidth) {
+      ocrStatus.textContent = "Start the camera and wait for the video before capturing.";
+      return;
+    }
+    if (!window.Tesseract) {
+      ocrStatus.textContent = "OCR library is unavailable. Check your internet connection.";
+      return;
+    }
+    ocrCanvas.width = ocrVideo.videoWidth;
+    ocrCanvas.height = ocrVideo.videoHeight;
+    ocrCanvas.getContext("2d").drawImage(ocrVideo, 0, 0);
+    ocrCapture.disabled = true;
+    ocrStatus.textContent = "Reading card text... please wait.";
+    try {
+      const result = await Tesseract.recognize(ocrCanvas, "eng");
+      ocrResult.value = (result.data.text || "").trim();
+      ocrUse.disabled = !ocrResult.value;
+      ocrUseBatch.disabled = !ocrResult.value;
+      ocrStatus.textContent = ocrResult.value
+        ? "Text detected. Select the ID or batch code, then choose the matching button."
+        : "No readable text found. Improve the lighting, hold the card steady, and try again.";
+    } catch (error) {
+      ocrStatus.textContent = "Could not read the image. Try again or enter the ID manually.";
+    } finally {
+      ocrCapture.disabled = !ocrStream;
+    }
+  });
+
+  ocrStop.addEventListener("click", stopOcrCamera);
+
+  function selectedOcrText() {
+    return ocrResult.value.slice(
+      ocrResult.selectionStart, ocrResult.selectionEnd
+    ).trim();
+  }
+
+  ocrUse.addEventListener("click", () => {
+    const selected = selectedOcrText();
+    if (!selected) {
+      ocrStatus.textContent = "Select the exact ID number in the recognized text first.";
+      return;
+    }
+    input.value = selected;
+    ocrStatus.textContent = "Selected text copied to the ID field. Confirm it before submitting.";
+    input.focus();
+  });
+
+  ocrUseBatch.addEventListener("click", () => {
+    const selected = selectedOcrText();
+    if (!selected) {
+      ocrStatus.textContent = "Select the exact batch code in the recognized text first.";
+      return;
+    }
+    batchCodeInput.value = selected.toUpperCase();
+    ocrStatus.textContent = "Selected text copied to the batch-code field. Confirm it before submitting.";
+    batchCodeInput.focus();
+  });
+
+  window.addEventListener("pagehide", () => {
+    if (scanner && running) scanner.stop().catch(() => {});
+    if (ocrStream) ocrStream.getTracks().forEach(track => track.stop());
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

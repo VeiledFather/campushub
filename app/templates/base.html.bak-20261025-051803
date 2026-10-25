@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f3ff">
+  <title>{% block title %}CampusHub{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/college-theme.css') }}?v=1">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{ url_for('main.home') }}">
+    <span class="brand-mark">C</span>
+    <span>Campus<span class="brand-light">Hub</span><small>YOUR CAMPUS. CONNECTED.</small></span>
+  </a>
+  <nav class="nav-links">
+    <a href="{{ url_for('main.home') }}">Discover</a>
+    <a href="{{ url_for('events.index') }}">Events</a>
+    {% if current_user.is_authenticated %}
+      <a href="{{ url_for('evai.planner_page') }}">EvAi Planner</a>
+      <a href="{{ url_for('evai.saved_plans') }}">Saved Plans</a>
+    {% endif %}
+    {% if current_user.is_authenticated %}
+            {% if current_user.role == "student" %}
+      <a href="{{ url_for('main.certificates') }}">My Certificates</a>
+      {% endif %}
+      <a href="{{ url_for('main.hall_of_fame') }}">Hall of Fame</a>
+    {% endif %}
+    {% if current_user.is_authenticated %}
+      <a href="{{ url_for('main.dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('events.notification_inbox') }}">Notifications{% if unread_notification_count %} ({{ unread_notification_count }}){% endif %}</a>
+      {% if current_user.role == 'teacher' %}
+        <a href="{{ url_for('academic.teacher_workspace') }}">Academic Management</a>
+        <a href="{{ url_for('academic.teacher_id_verification') }}">ID Verification</a>
+      {% endif %}
+      {% if current_user.role in ['admin', 'super_admin', 'developer'] %}
+        <a href="{{ url_for('academic.index') }}">Academic Admin</a>
+        <a href="{{ url_for('events.review_queue') }}">Review Events</a>
+      {% endif %}
+      {% if current_user.role in ['admin', 'super_admin', 'developer', 'organizer', 'teacher'] %}
+        <a href="{{ url_for('main.event_analytics') }}">Event Analytics</a>
+      {% endif %}
+      {% if current_user.role == 'student' %}
+        <a href="{{ url_for('academic.student_id_verification') }}">Verify Student ID</a>
+        <a href="{{ url_for('volunteers.mine') }}">My Volunteer Applications</a>
+        <a href="{{ url_for('volunteers.assignments') }}">My Assignments</a>
+      {% endif %}
+      {% if current_user.role in ['organizer', 'teacher', 'admin', 'super_admin', 'developer'] %}
+        <a href="{{ url_for('volunteers.review') }}">Volunteer Review</a>
+      {% endif %}
+      <span class="role-pill">{{ current_user.role|replace('_', ' ')|title }}</span>
+      <form method="post" action="{{ url_for('auth.logout') }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="nav-button" type="submit">Log out</button>
+      </form>
+    {% else %}
+      <a href="{{ url_for('auth.login') }}">Log in</a>
+      
+<a href="{{ url_for('main.index') if 'main.index' in current_app.view_functions else url_for('main.home') }}"
+   class="college-emblem-link" aria-label="CampusHub home">
+  <img class="college-emblem"
+       src="{{ url_for('static', filename='images/college-emblem.png') }}"
+       alt="Karmaveer Bhaurao Patil College emblem">
+</a>
+<a class="button button-small" href="{{ url_for('auth.register') }}">Join CampusHub</a>
+    {% endif %}
+  
+{% if current_user.is_authenticated and (current_user.role|string|lower) in ['organizer', 'organiser', 'teacher', 'admin', 'super_admin', 'developer'] %}
+<a class="btn btn-outline-light btn-sm ms-2"
+   href="{{ url_for('main.organizer_certificate_manager') }}">
+  🎓 Manage Certificates
+</a>
+{% endif %}
+
+</nav>
+</header>
+
+<main class="page">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <section class="flash-stack" aria-live="polite">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="footer">
+  <div><strong>CampusHub</strong> · Built for campus life.</div>
+  <div>Powered by <strong class="evai">EvAi</strong></div>
+</footer>
+
+{% if current_user.is_authenticated %}
+<a id="evai-floating-launcher"
+   class="evai-floating-launcher"
+   href="{{ url_for('evai.planner_page') }}"
+   aria-label="Open EvAi Assistant"
+   title="Open EvAi Assistant">
+  <span class="evai-floating-icon" aria-hidden="true">✦</span>
+  <span class="evai-floating-label"><strong>EvAi</strong><small>CampusHub assistant</small></span>
+  <span class="evai-drag-handle" aria-hidden="true">⠿</span>
+</a>
+<script>
+(() => {
+  const button = document.getElementById("evai-floating-launcher");
+  if (!button) return;
+
+  const storageKey = "campushub-evai-launcher-position";
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(storageKey) || "null"); } catch (_) {}
+
+  const margin = 12;
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
+
+  function restorePosition() {
+    if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+      const rect = button.getBoundingClientRect();
+      button.style.left = clamp(saved.left, margin, innerWidth - rect.width - margin) + "px";
+      button.style.top = clamp(saved.top, margin, innerHeight - rect.height - margin) + "px";
+      button.style.right = "auto";
+      button.style.bottom = "auto";
+    }
+  }
+
+  restorePosition();
+
+  let pointerStart = null;
+  let moved = false;
+  let suppressClick = false;
+
+  button.addEventListener("pointerdown", event => {
+    if (event.button !== undefined && event.button !== 0) return;
+    const rect = button.getBoundingClientRect();
+    pointerStart = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      left: rect.left,
+      top: rect.top
+    };
+    moved = false;
+    button.setPointerCapture?.(event.pointerId);
+  });
+
+  button.addEventListener("pointermove", event => {
+    if (!pointerStart || event.pointerId !== pointerStart.id) return;
+    const dx = event.clientX - pointerStart.x;
+    const dy = event.clientY - pointerStart.y;
+    if (!moved && Math.hypot(dx, dy) < 5) return;
+    moved = true;
+
+    const rect = button.getBoundingClientRect();
+    button.style.left = clamp(pointerStart.left + dx, margin, innerWidth - rect.width - margin) + "px";
+    button.style.top = clamp(pointerStart.top + dy, margin, innerHeight - rect.height - margin) + "px";
+    button.style.right = "auto";
+    button.style.bottom = "auto";
+    event.preventDefault();
+  });
+
+  function finishDrag(event) {
+    if (!pointerStart || event.pointerId !== pointerStart.id) return;
+    if (moved) {
+      const rect = button.getBoundingClientRect();
+      saved = {left: rect.left, top: rect.top};
+      try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch (_) {}
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 250);
+    }
+    pointerStart = null;
+  }
+
+  button.addEventListener("pointerup", finishDrag);
+  button.addEventListener("pointercancel", finishDrag);
+  button.addEventListener("click", event => {
+    if (suppressClick) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    const rect = button.getBoundingClientRect();
+    const left = clamp(rect.left, margin, innerWidth - rect.width - margin);
+    const top = clamp(rect.top, margin, innerHeight - rect.height - margin);
+    button.style.left = left + "px";
+    button.style.top = top + "px";
+    button.style.right = "auto";
+    button.style.bottom = "auto";
+    saved = {left, top};
+    try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch (_) {}
+  });
+})();
+</script>
+{% endif %}
+
+  {% include "evai/assistant_widget.html" %}
+</body>
+</html>

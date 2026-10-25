@@ -1,0 +1,127 @@
+<style>
+#evai-chat-panel{position:fixed;right:22px;bottom:96px;width:min(390px,calc(100vw - 24px));height:min(570px,calc(100dvh - 125px));z-index:9998;display:none;flex-direction:column;overflow:hidden;border:1px solid #514365;border-radius:20px;background:var(--card-bg,#17141e);color:var(--text-color,#f7f3ff);box-shadow:0 18px 60px #0008;font-family:inherit}
+#evai-chat-panel.open{display:flex}
+.evai-chat-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;background:#211a2d;border-bottom:1px solid #443650}
+.evai-chat-head strong{font-size:17px}.evai-chat-head small{display:block;opacity:.7;margin-top:3px}
+#evai-chat-close{border:0;background:transparent;color:inherit;font-size:24px;cursor:pointer}
+#evai-chat-log{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+.evai-chat-message{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5;padding:11px 13px;border-radius:13px;max-width:92%;font-size:14px}
+.evai-chat-message.bot{background:#292235;align-self:flex-start}.evai-chat-message.user{background:#b69aff;color:#1c1426;align-self:flex-end}
+.evai-chat-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.evai-chat-links a{font-size:12px;color:#d3bfff;border:1px solid #65547c;padding:7px 9px;border-radius:9px;text-decoration:none}
+#evai-chat-form{padding:12px;border-top:1px solid #443650;display:flex;gap:8px}
+#evai-chat-input{min-width:0;flex:1;resize:none;max-height:100px;border-radius:11px;padding:11px;background:var(--input-bg,#100e14);color:inherit;border:1px solid #51465f}
+#evai-chat-send{border:0;border-radius:11px;background:#b69aff;color:#1c1426;font-weight:800;padding:0 14px;cursor:pointer}
+#evai-chat-send:disabled{opacity:.6}
+@media(max-width:480px){ #evai-chat-panel{right:12px;bottom:86px;height:min(600px,calc(100dvh - 105px))}}
+</style>
+
+<section id="evai-chat-panel" role="dialog" aria-label="EvAi CampusHub assistant" aria-modal="false">
+  <header class="evai-chat-head">
+    <div><strong>✦ EvAi</strong><small>Your CampusHub assistant</small></div>
+    <button id="evai-chat-close" type="button" aria-label="Close assistant">×</button>
+  </header>
+  <div id="evai-chat-log" aria-live="polite">
+    <div class="evai-chat-message bot">Hey! I'm EvAi. Ask me about campus events, venues, the Hall of Fame, or how to use CampusHub. For event planning, I can take you to the existing planner.</div>
+    <div class="evai-chat-links">
+      <a href="/events">Browse events</a>
+      <a href="/hall-of-fame">Hall of Fame</a>
+      <a href="/evai/">Event Planner</a>
+    </div>
+  </div>
+  <form id="evai-chat-form">
+    <input type="hidden" id="evai-chat-csrf" value="{{ csrf_token() }}">
+    <textarea id="evai-chat-input" rows="1" maxlength="1200" placeholder="Ask EvAi anything…" aria-label="Message EvAi" required></textarea>
+    <button id="evai-chat-send" type="submit">Send</button>
+  </form>
+</section>
+
+<script>
+(() => {
+  const launcher = document.getElementById("evai-floating-launcher");
+  const panel = document.getElementById("evai-chat-panel");
+  const close = document.getElementById("evai-chat-close");
+  const form = document.getElementById("evai-chat-form");
+  const input = document.getElementById("evai-chat-input");
+  const send = document.getElementById("evai-chat-send");
+  const log = document.getElementById("evai-chat-log");
+  if (!launcher || !panel || !form) return;
+
+  function toggle(open) {
+    panel.classList.toggle("open", open);
+    if (open) input.focus();
+    launcher.setAttribute("aria-expanded", String(open));
+  }
+  launcher.setAttribute("aria-controls", "evai-chat-panel");
+  launcher.setAttribute("aria-expanded", "false");
+  launcher.addEventListener("click", event => {
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    toggle(!panel.classList.contains("open"));
+  });
+  close.addEventListener("click", () => toggle(false));
+
+  function addMessage(text, who, links) {
+    const bubble = document.createElement("div");
+    bubble.className = "evai-chat-message " + who;
+    bubble.textContent = text;
+    log.appendChild(bubble);
+    if (Array.isArray(links) && links.length) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "evai-chat-links";
+      links.forEach(item => {
+        if (!item || typeof item.url !== "string" || !item.url.startsWith("/")) return;
+        const link = document.createElement("a");
+        link.href = item.url;
+        link.textContent = item.label || "Open page";
+        wrapper.appendChild(link);
+      });
+      if (wrapper.childElementCount) log.appendChild(wrapper);
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const message = input.value.trim();
+    if (!message) return;
+    addMessage(message, "user");
+    input.value = "";
+    send.disabled = true;
+    send.textContent = "…";
+    const pending = document.createElement("div");
+    pending.className = "evai-chat-message bot";
+    pending.textContent = "EvAi is thinking…";
+    log.appendChild(pending);
+    log.scrollTop = log.scrollHeight;
+    try {
+      const response = await fetch("/evai/assistant/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": document.getElementById("evai-chat-csrf").value
+        },
+        body: JSON.stringify({message})
+      });
+      const data = await response.json();
+      pending.remove();
+      if (!response.ok) throw new Error(data.error || "EvAi couldn't answer that.");
+      addMessage(data.answer || "I couldn't find an answer for that.", "bot", data.links);
+    } catch (error) {
+      pending.remove();
+      addMessage(error.message || "Something went wrong. Please try again.", "bot");
+    } finally {
+      send.disabled = false;
+      send.textContent = "Send";
+      input.focus();
+    }
+  });
+
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+})();
+</script>

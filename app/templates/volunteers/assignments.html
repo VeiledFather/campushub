@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}My Volunteer Assignments | CampusHub{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">VOLUNTEER OPERATIONS</p>
+  <h1>My assignments</h1>
+  <p>Events where your volunteer application has been approved.</p>
+</section>
+
+<section class="event-list">
+  {% for application in applications %}
+  <article class="event-card">
+    <p class="eyebrow">APPROVED VOLUNTEER</p>
+    <h2>{{ application.event.title }}</h2>
+    <p>{{ application.event.description or "Help make this campus event a success." }}</p>
+
+    <div class="profile-row">
+      <span>Event status</span>
+      <strong>{{ application.event.status|replace("_", " ")|title }}</strong>
+    </div>
+    <div class="profile-row">
+      <span>Starts</span>
+      <strong>{{ application.event.start_time.strftime("%d %b %Y, %I:%M %p") }} UTC</strong>
+    </div>
+    <div class="profile-row">
+      <span>Venue</span>
+      <strong>{{ application.event.venue.name }}</strong>
+    </div>
+
+    <p class="status-active">✓ Your application is approved for this event.</p>
+    <div class="button-row">
+      <a class="button button-primary"
+         href="{{ url_for('tickets.check_in') }}">Open ticket check-in</a>
+      <a class="button button-quiet"
+         href="{{ url_for('events.detail', event_id=application.event_id) }}">View event</a>
+    </div>
+  </article>
+  {% else %}
+  <div class="empty-events">
+    <h3>No approved assignments yet</h3>
+    <p>Once an organizer approves your application, the event will appear here.</p>
+    <a class="button button-primary" href="{{ url_for('events.index') }}">Explore events</a>
+  </div>
+  {% endfor %}
+</section>
+{% endblock %}

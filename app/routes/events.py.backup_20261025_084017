@@ -1,0 +1,875 @@
+from datetime import datetime, timezone
+from functools import wraps
+from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+
+from app.extensions import db
+from app.models import (
+
+
+def _can_create_events(user):
+    """Keep student access while allowing approved student organizers."""
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if user.role in {"teacher", "organizer", "admin", "super_admin", "developer"}:
+        return True
+    if user.role != "student":
+        return False
+    try:
+        from app.models import OrganizerApplication
+        return OrganizerApplication.query.filter_by(
+            user_id=user.id, status="approved"
+        ).first() is not None
+    except Exception:
+        return False
+
+    Review,
+    EVENT_STATUSES,
+    Event,
+    Notification,
+    Registration,
+    User,
+    Student,
+    Ticket,
+    TeacherEventParticipation,
+    Venue,
+)
+
+events_bp = Blueprint("events", __name__, url_prefix="/events")
+
+IST = ZoneInfo("Asia/Kolkata")
+
+EVENT_CREATOR_ROLES = {
+    "teacher", "organizer", "admin", "super_admin", "developer"
+}
+ADMIN_ROLES = {"admin", "super_admin", "developer"}
+
+
+def role_required(*roles):
+    def decorator(view):
+        @wraps(view)
+        @login_required
+        def wrapped(*args, **kwargs):
+            if current_user.role not in roles:
+                abort(403)
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def valid_statuses():
+    result = set()
+    for item in EVENT_STATUSES:
+        result.add(item[0] if isinstance(item, (tuple, list)) else item)
+    return result
+
+
+def choose_status(*candidates):
+    allowed = valid_statuses()
+    for candidate in candidates:
+        if candidate in allowed:
+            return candidate
+    raise RuntimeError(
+        f"None of these statuses are configured in EVENT_STATUSES: {candidates}. "
+        f"Configured statuses: {sorted(allowed)}"
+    )
+
+
+def utc_now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def parse_ist_datetime(value):
+    """Convert a datetime-local form value from IST to naive UTC for storage."""
+    if not value:
+        return None
+    local = datetime.fromisoformat(value).replace(tzinfo=IST)
+    return local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def create_event_notification(
+    recipient_id, notification_type, title, message, event_id
+):
+    """Create an in-app notification linked to an event."""
+    if not recipient_id:
+        return
+
+    notification = Notification(
+        recipient_id=recipient_id,
+        notification_type=notification_type,
+        title=title[:200],
+        message=message,
+        related_event_id=event_id,
+    )
+    db.session.add(notification)
+
+
+
+def find_event_conflicts(venue_id, host_user_id, start_time, end_time, exclude_event_id=None):
+    """Find overlapping venue bookings and organizer schedules."""
+    query = Event.query.filter(
+        Event.status.notin_(("cancelled", "completed")),
+        Event.start_time < end_time,
+        Event.end_time > start_time,
+    )
+
+    if exclude_event_id is not None:
+        query = query.filter(Event.id != exclude_event_id)
+
+    overlaps = query.all()
+    conflicts = []
+
+    for other in overlaps:
+        venue_name = other.venue.name if other.venue else "Unknown venue"
+        start_label = other.start_time.strftime("%d %b %Y, %I:%M %p") if other.start_time else "Unscheduled"
+        end_label = other.end_time.strftime("%I:%M %p") if other.end_time else ""
+
+        details = (
+            f'"{other.title}" at {venue_name}, '
+            f'{start_label}{(" – " + end_label) if end_label else ""}'
+        )
+
+        if other.venue_id == venue_id:
+            conflicts.append({
+                "type": "venue",
+                "event": other,
+                "message": f"Venue conflict: {details}.",
+            })
+
+        if other.host_user_id == host_user_id:
+            conflicts.append({
+                "type": "organizer",
+                "event": other,
+                "message": f"Organizer schedule conflict: {details}.",
+            })
+
+    return conflicts
+
+
+def event_is_full(event):
+    if event.max_participants is None:
+        return False
+
+    active_student_count = Registration.query.filter(
+        Registration.event_id == event.id,
+        Registration.status != "cancelled",
+    ).count()
+
+    # Teachers and students share the event's participant limit.
+    active_teacher_count = TeacherEventParticipation.query.filter_by(
+        event_id=event.id,
+        status="registered",
+    ).count()
+
+    return (
+        active_student_count + active_teacher_count
+        >= event.max_participants
+    )
+
+def registration_is_open(event):
+    now = utc_now()
+    return (
+        event.status == "published"
+        and event.is_public
+        and (event.registration_start is None or event.registration_start <= now)
+        and (event.registration_end is None or event.registration_end >= now)
+        and (event.start_time is None or event.start_time > now)
+    )
+
+
+@events_bp.get("/")
+def index():
+    events = Event.query.filter_by(
+        status="published",
+        is_public=True,
+    ).order_by(Event.start_time.asc()).all()
+
+    return render_template("events/index.html", events=events)
+
+
+@events_bp.route("/new", methods=["GET", "POST"])
+@role_required(*EVENT_CREATOR_ROLES)
+def create():
+    venues = Venue.query.filter_by(
+        is_active=True,
+        is_event_venue=True,
+    ).order_by(Venue.name.asc()).all()
+
+    # Prefill from a saved EvAi plan owned by the current user.
+    saved_plan = None
+    saved_plan_id = request.args.get("saved_plan_id", type=int)
+    if saved_plan_id:
+        import json
+        from app.models import EvAiSavedPlan
+
+        saved_record = EvAiSavedPlan.query.filter_by(
+            id=saved_plan_id,
+            user_id=current_user.id,
+        ).first()
+
+        if saved_record:
+            try:
+                saved_plan = json.loads(saved_record.plan_json)
+                if not isinstance(saved_plan, dict):
+                    saved_plan = None
+            except (TypeError, ValueError):
+                saved_plan = None
+
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        description = request.form.get("description", "").strip()
+        event_type = request.form.get("event_type", "general").strip() or "general"
+        food = request.form.get("food_requirements", "").strip() or None
+        equipment = request.form.get("equipment_requirements", "").strip() or None
+
+        try:
+            venue_id = int(request.form.get("venue_id", ""))
+            venue = db.session.get(Venue, venue_id)
+            start = parse_ist_datetime(request.form.get("start_time", ""))
+            end = parse_ist_datetime(request.form.get("end_time", ""))
+            reg_start = parse_ist_datetime(request.form.get("registration_start", ""))
+            reg_end = parse_ist_datetime(request.form.get("registration_end", ""))
+            capacity_text = request.form.get("max_participants", "").strip()
+            capacity = int(capacity_text) if capacity_text else None
+        except (ValueError, TypeError, OverflowError):
+            flash("Check the venue, dates, and participant limit.", "error")
+            return render_template("events/create.html", venues=venues, saved_plan=saved_plan)
+
+        if not title or len(title) > 200:
+            flash("Enter an event title of up to 200 characters.", "error")
+        elif len(event_type) > 80:
+            flash("Event type must be 80 characters or fewer.", "error")
+        elif not venue or not venue.is_active or not venue.is_event_venue:
+            flash("Choose an active event venue.", "error")
+        elif not start or not end or end <= start:
+            flash("The end time must be later than the start time.", "error")
+        elif reg_start and reg_end and reg_end < reg_start:
+            flash("Registration closing time must follow its opening time.", "error")
+        elif reg_end and reg_end > start:
+            flash("Registration must close before the event starts.", "error")
+        elif capacity is not None and (capacity < 1 or capacity > venue.capacity):
+            flash(f"Participant limit must be between 1 and the venue capacity ({venue.capacity}).", "error")
+        else:
+            conflicts = find_event_conflicts(
+                venue_id=venue.id,
+                host_user_id=current_user.id,
+                start_time=start,
+                end_time=end,
+            )
+            if conflicts:
+                for conflict in conflicts:
+                    flash(conflict["message"], "error")
+            else:
+                approval_required = (
+                    request.form.get("approval_required") == "yes"
+                )
+                initial_status = choose_status(
+                    "pending_approval", "pending", "draft"
+                ) if approval_required else choose_status("draft")
+
+                event = Event(
+                    event_code="CH-" + uuid4().hex[:12].upper(),
+                    title=title,
+                    description=description,
+                    event_type=event_type,
+                    venue_id=venue.id,
+                    host_user_id=current_user.id,
+                    start_time=start,
+                    end_time=end,
+                    registration_start=reg_start,
+                    registration_end=reg_end,
+                    max_participants=capacity,
+                    ticket_required=request.form.get("ticket_required") == "yes",
+                    approval_required=approval_required,
+                    is_public=request.form.get("is_public") == "yes",
+                    status=initial_status,
+                    food_requirements=food,
+                    equipment_requirements=equipment,
+                )
+                db.session.add(event)
+                db.session.flush()
+
+                if approval_required and event.status in {"pending_approval", "pending"}:
+                    admins = User.query.filter(
+                        User.role.in_(ADMIN_ROLES),
+                        User.is_active.is_(True),
+                        User.is_suspended.is_(False),
+                    ).all()
+
+                    for admin in admins:
+                        if admin.id != current_user.id:
+                            create_event_notification(
+                                recipient_id=admin.id,
+                                notification_type="event_pending_review",
+                                title="Event awaiting approval",
+                                message=f'"{event.title}" was submitted by {current_user.full_name} and needs review.',
+                                event_id=event.id,
+                            )
+
+                db.session.commit()
+
+                flash("Event created. Review its status and submit it for approval if required.", "success")
+                return redirect(url_for("events.detail", event_id=event.id))
+
+    return render_template("events/create.html", venues=venues, saved_plan=saved_plan)
+
+
+@events_bp.get("/<int:event_id>")
+def detail(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    if not event.is_public and (
+        not current_user.is_authenticated
+        or (
+            current_user.id != event.host_user_id
+            and current_user.role not in ADMIN_ROLES
+        )
+    ):
+        abort(404)
+
+    already_registered = False
+    student = None
+    student_registration = None
+    user_review = None
+
+    if current_user.is_authenticated and current_user.role == "student":
+        student = Student.query.filter_by(user_id=current_user.id).first()
+        if student:
+            student_registration = Registration.query.filter_by(
+                event_id=event.id,
+                student_id=student.id,
+            ).filter(Registration.status != "cancelled").first()
+            already_registered = student_registration is not None
+
+            user_review = Review.query.filter_by(
+                event_id=event.id,
+                student_id=student.id,
+            ).first()
+
+    can_manage = current_user.is_authenticated and (
+        current_user.role in ADMIN_ROLES
+        or (
+            _can_create_events(current_user)
+            and current_user.id == event.host_user_id
+        )
+    )
+
+    reviews = (
+        Review.query.filter_by(event_id=event.id)
+        .order_by(Review.id.desc())
+        .all()
+    )
+    average_rating = (
+        db.session.query(func.avg(Review.rating))
+        .filter(Review.event_id == event.id)
+        .scalar()
+    )
+
+    can_review = (
+        current_user.is_authenticated
+        and current_user.role == "student"
+        and student is not None
+        and student_registration is not None
+        and event.status == "completed"
+        and user_review is None
+    )
+
+    return render_template(
+        "events/detail.html",
+        event=event,
+        already_registered=already_registered,
+        student=student,
+        student_registration=student_registration,
+        can_manage=can_manage,
+        registration_open=registration_is_open(event),
+        event_full=event_is_full(event),
+        reviews=reviews,
+        average_rating=average_rating,
+        user_review=user_review,
+        can_review=can_review,
+    )
+
+
+@events_bp.post("/<int:event_id>/reviews")
+@role_required("student")
+def submit_review(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    if event.status != "completed":
+        flash("You can review an event after it has been completed.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    student = Student.query.filter_by(user_id=current_user.id).first()
+    if not student:
+        flash("Your account needs a linked student profile to submit a review.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    registration = Registration.query.filter_by(
+        event_id=event.id,
+        student_id=student.id,
+    ).filter(Registration.status != "cancelled").first()
+
+    if not registration:
+        abort(403)
+
+    if Review.query.filter_by(
+        event_id=event.id,
+        student_id=student.id,
+    ).first():
+        flash("You have already reviewed this event.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    try:
+        rating = int(request.form.get("rating", ""))
+    except (TypeError, ValueError):
+        rating = 0
+
+    feedback = request.form.get("feedback", "").strip()
+
+    if rating not in range(1, 6):
+        flash("Choose a rating from 1 to 5 stars.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    if len(feedback) > 2000:
+        flash("Feedback must be 2,000 characters or fewer.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    db.session.add(
+        Review(
+            event_id=event.id,
+            student_id=student.id,
+            rating=rating,
+            feedback=feedback or None,
+        )
+    )
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash("You have already reviewed this event.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    flash("Thanks! Your event review has been submitted.", "success")
+    return redirect(url_for("events.detail", event_id=event.id))
+
+
+@events_bp.route("/<int:event_id>/edit", methods=["GET", "POST"])
+@role_required(*EVENT_CREATOR_ROLES)
+def edit(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    if current_user.role not in ADMIN_ROLES and event.host_user_id != current_user.id:
+        abort(403)
+
+    if event.status in {"completed", "cancelled", "ongoing"}:
+        flash("This event can no longer be edited.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    venues = Venue.query.filter_by(
+        is_active=True,
+        is_event_venue=True,
+    ).order_by(Venue.name.asc()).all()
+
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        description = request.form.get("description", "").strip()
+        event_type = request.form.get("event_type", "general").strip() or "general"
+        food = request.form.get("food_requirements", "").strip() or None
+        equipment = request.form.get("equipment_requirements", "").strip() or None
+
+        try:
+            venue_id = int(request.form.get("venue_id", ""))
+            venue = db.session.get(Venue, venue_id)
+            start = parse_ist_datetime(request.form.get("start_time", ""))
+            end = parse_ist_datetime(request.form.get("end_time", ""))
+            reg_start = parse_ist_datetime(request.form.get("registration_start", ""))
+            reg_end = parse_ist_datetime(request.form.get("registration_end", ""))
+            capacity_text = request.form.get("max_participants", "").strip()
+            capacity = int(capacity_text) if capacity_text else None
+        except (ValueError, TypeError, OverflowError):
+            flash("Check the venue, dates, and participant limit.", "error")
+            return render_template("events/edit.html", event=event, venues=venues)
+
+        error = None
+        if not title or len(title) > 200:
+            error = "Enter an event title of up to 200 characters."
+        elif len(event_type) > 80:
+            error = "Event type must be 80 characters or fewer."
+        elif not venue or not venue.is_active or not venue.is_event_venue:
+            error = "Choose an active event venue."
+        elif not start or not end or end <= start:
+            error = "The end time must be later than the start time."
+        elif reg_start and reg_end and reg_end < reg_start:
+            error = "Registration closing time must follow its opening time."
+        elif reg_end and reg_end > start:
+            error = "Registration must close before the event starts."
+        elif capacity is not None and (capacity < 1 or capacity > venue.capacity):
+            error = f"Participant limit must be between 1 and venue capacity ({venue.capacity})."
+
+        if error:
+            flash(error, "error")
+        else:
+            conflicts = find_event_conflicts(
+                venue_id=venue.id,
+                host_user_id=event.host_user_id,
+                start_time=start,
+                end_time=end,
+                exclude_event_id=event.id,
+            )
+            if conflicts:
+                for conflict in conflicts:
+                    flash(conflict["message"], "error")
+            else:
+                event.title = title
+                event.description = description
+                event.event_type = event_type
+                event.venue_id = venue.id
+                event.start_time = start
+                event.end_time = end
+                event.registration_start = reg_start
+                event.registration_end = reg_end
+                event.max_participants = capacity
+                event.ticket_required = request.form.get("ticket_required") == "yes"
+                event.is_public = request.form.get("is_public") == "yes"
+                event.food_requirements = food
+                event.equipment_requirements = equipment
+
+                # Material edits to a published event require a fresh review.
+                if event.status in {"published", "approved"}:
+                    if event.approval_required:
+                        event.status = choose_status("pending_approval", "pending", "draft")
+                    else:
+                        event.status = choose_status("draft")
+                    event.published_at = None
+
+            db.session.commit()
+            flash("Event updated successfully.", "success")
+            return redirect(url_for("events.detail", event_id=event.id))
+
+    return render_template("events/edit.html", event=event, venues=venues)
+
+
+@events_bp.get("/notifications")
+@login_required
+def notification_inbox():
+    notifications = (
+        Notification.query
+        .filter_by(recipient_id=current_user.id)
+        .order_by(Notification.created_at.desc())
+        .all()
+    )
+    unread_count = sum(not notification.is_read for notification in notifications)
+
+    return render_template(
+        "events/notifications.html",
+        notifications=notifications,
+        unread_count=unread_count,
+    )
+
+
+@events_bp.post("/notifications/<int:notification_id>/read")
+@login_required
+def mark_notification_read(notification_id):
+    notification = db.session.get(Notification, notification_id)
+    if not notification:
+        abort(404)
+
+    if notification.recipient_id != current_user.id:
+        abort(403)
+
+    if not notification.is_read:
+        notification.is_read = True
+        notification.read_at = utc_now()
+        db.session.commit()
+
+    # Open only events that are public and currently published.
+    # Private or unavailable events should not send the user to a 404 page.
+    event = notification.related_event
+    if event and event.is_public and event.status == "published":
+        return redirect(url_for(
+            "events.detail",
+            event_id=event.id,
+        ))
+
+    return redirect(url_for("events.notification_inbox"))
+
+
+@events_bp.get("/review")
+@role_required(*ADMIN_ROLES)
+def review_queue():
+    review_statuses = {"pending_approval", "pending"}
+    events = (
+        Event.query
+        .filter(Event.status.in_(review_statuses))
+        .order_by(Event.created_at.desc())
+        .all()
+    )
+    return render_template("events/review.html", events=events)
+
+
+@events_bp.post("/<int:event_id>/approve")
+@role_required(*ADMIN_ROLES)
+def approve(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    review_statuses = {
+        status for status in ("pending_approval", "pending")
+        if status in valid_statuses()
+    }
+    if event.status not in review_statuses:
+        flash("This event is not awaiting approval.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    # Approval is distinct from publication.
+    event.approval_required = True
+    event.status = choose_status("approved", "draft")
+
+    create_event_notification(
+        recipient_id=event.host_user_id,
+        notification_type="event_approved",
+        title="Event approved",
+        message=f'Your event "{event.title}" has been approved and is ready to publish.',
+        event_id=event.id,
+    )
+    db.session.commit()
+    flash("Event approved. It still needs to be published.", "success")
+    return redirect(url_for("events.detail", event_id=event.id))
+
+
+@events_bp.post("/<int:event_id>/publish")
+@role_required(*EVENT_CREATOR_ROLES)
+def publish(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    if current_user.role not in ADMIN_ROLES and event.host_user_id != current_user.id:
+        abort(403)
+
+    if event.approval_required and event.status not in {"approved", "published"}:
+        flash("This event must be approved by an administrator before publishing.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    if event.status not in {"draft", "approved", "published"}:
+        flash("This event cannot be published in its current state.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    event.status = choose_status("published")
+    event.published_at = utc_now()
+    db.session.commit()
+    flash("Event published successfully.", "success")
+    return redirect(url_for("events.detail", event_id=event.id))
+
+
+@events_bp.post("/<int:event_id>/reject")
+@role_required(*ADMIN_ROLES)
+def reject(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    if event.status not in {"pending_approval", "pending", "draft"}:
+        flash("Only events awaiting review can be rejected.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    reason = request.form.get("reason", "").strip()
+    if not reason:
+        flash("Provide feedback explaining why the event was rejected.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    event.status = choose_status("draft")
+    event.approval_required = True
+    event.cancellation_reason = reason[:2000]
+
+    create_event_notification(
+        recipient_id=event.host_user_id,
+        notification_type="event_rejected",
+        title="Event needs changes",
+        message=f'Your event "{event.title}" needs changes before approval. Feedback: {reason[:2000]}',
+        event_id=event.id,
+    )
+    db.session.commit()
+
+    flash("Event returned to draft with your feedback.", "success")
+    return redirect(url_for("events.detail", event_id=event.id))
+
+
+@events_bp.post("/<int:event_id>/cancel")
+@role_required(*EVENT_CREATOR_ROLES)
+def cancel(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    if current_user.role not in ADMIN_ROLES and event.host_user_id != current_user.id:
+        abort(403)
+
+    if event.status in {"completed", "cancelled"}:
+        flash("This event has already ended or been cancelled.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    reason = request.form.get("reason", "").strip()
+    if not reason:
+        flash("Provide a reason for cancelling the event.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    event.status = choose_status("cancelled")
+    event.is_public = False
+    event.cancelled_at = utc_now()
+    event.cancellation_reason = reason[:2000]
+
+    # Notify the organizer when an administrator cancels their event.
+    if current_user.id != event.host_user_id:
+        create_event_notification(
+            recipient_id=event.host_user_id,
+            notification_type="event_cancelled",
+            title="Your event was cancelled",
+            message=f'Your event "{event.title}" was cancelled. Reason: {reason[:2000]}',
+            event_id=event.id,
+        )
+
+    # Notify students who have active registrations for this event.
+    registrations = Registration.query.filter(
+        Registration.event_id == event.id,
+        Registration.status != "cancelled",
+    ).all()
+
+    notified_students = set()
+    for registration in registrations:
+        student = db.session.get(Student, registration.student_id)
+        if not student or not student.user_id:
+            continue
+
+        recipient_id = student.user_id
+        if recipient_id in notified_students or recipient_id == current_user.id:
+            continue
+
+        notified_students.add(recipient_id)
+        create_event_notification(
+            recipient_id=recipient_id,
+            notification_type="event_cancelled",
+            title="An event you registered for was cancelled",
+            message=f'"{event.title}" has been cancelled. Reason: {reason[:2000]}',
+            event_id=event.id,
+        )
+
+    db.session.commit()
+
+    flash("Event cancelled and removed from public listings. Notifications sent.", "success")
+    return redirect(url_for("events.detail", event_id=event.id))
+
+
+@events_bp.post("/<int:event_id>/resubmit")
+@role_required(*EVENT_CREATOR_ROLES)
+def resubmit(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    if current_user.role not in ADMIN_ROLES and event.host_user_id != current_user.id:
+        abort(403)
+
+    if (
+        event.status != "draft"
+        or not event.approval_required
+        or not event.cancellation_reason
+    ):
+        flash("Only a rejected event with review feedback can be resubmitted.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    event.status = choose_status("pending_approval", "pending", "draft")
+    event.cancellation_reason = None
+    db.session.commit()
+
+    flash("Event resubmitted for administrator review.", "success")
+    return redirect(url_for("events.detail", event_id=event.id))
+
+
+@events_bp.post("/<int:event_id>/register")
+@role_required("student")
+def register_for_event(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        abort(404)
+
+    student = Student.query.filter_by(user_id=current_user.id).first()
+    if not student:
+        flash("Your account needs a student profile before you can register. Contact your campus administrator.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    if not student.campus_id_active:
+        flash("Your campus ID is inactive. Contact your campus administrator.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    if not registration_is_open(event):
+        flash("Registration is not currently open for this event.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    existing = Registration.query.filter_by(
+        event_id=event.id,
+        student_id=student.id,
+    ).first()
+
+    if existing and existing.status != "cancelled":
+        flash("You are already registered for this event.", "info")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    if event_is_full(event):
+        flash("This event has reached its participant limit.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    if existing and existing.ticket and existing.ticket.checked_in_at:
+        flash("This registration has already been checked in and cannot be reactivated.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    if existing:
+        registration = existing
+        registration.status = "registered"
+        registration.registered_at = utc_now()
+    else:
+        registration = Registration(
+            event_id=event.id,
+            student_id=student.id,
+            status="registered",
+            registered_at=utc_now(),
+        )
+        db.session.add(registration)
+
+    # Save the registration first so it has an ID for its one-to-one ticket.
+    db.session.flush()
+
+    if event.ticket_required:
+        ticket = Ticket.query.filter_by(registration_id=registration.id).first()
+        if ticket is None:
+            ticket = Ticket(
+                registration_id=registration.id,
+                ticket_code="CHT-" + uuid4().hex[:16].upper(),
+                qr_token=__import__("secrets").token_urlsafe(32),
+                status="active",
+                expires_at=event.end_time,
+            )
+            db.session.add(ticket)
+        else:
+            ticket.ticket_code = "CHT-" + uuid4().hex[:16].upper()
+            ticket.qr_token = __import__("secrets").token_urlsafe(32)
+            ticket.status = "active"
+            ticket.checked_in_at = None
+            ticket.expires_at = event.end_time
+
+    db.session.commit()
+    flash("You are registered for the event!", "success")
+    return redirect(url_for("events.detail", event_id=event.id))

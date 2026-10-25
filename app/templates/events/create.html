@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% block title %}Create an event · CampusHub
+
+
+{% endblock %}
+{% block content %}
+<section class="form-page">
+  <a class="back-link" href="{{ url_for('events.index') }}">← All events</a>
+  <div class="eyebrow">BRING YOUR IDEA TO LIFE</div>
+  <h1>Create an <span class="gradient-text">event.</span></h1>
+  <p class="muted">Dates and times are entered in Indian Standard Time (IST).</p>
+  {% if not venues %}
+  <div class="flash flash-error">No active event venues exist yet. An administrator must add a venue before events can be created.</div>
+  {% endif %}
+  <form method="post" class="event-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid">
+      <label class="span-two">Event title<input name="title" maxlength="200" required placeholder="Give your event a name" value="{{ saved_plan.get('title', '') if saved_plan else '' }}"></label>
+      <label>Event type<input name="event_type" maxlength="80" value="{{ saved_plan.get('event_type', 'general') if saved_plan else 'general' }}" required placeholder="Workshop, fest, seminar..."></label>
+      <label>Venue<select name="venue_id" required {% if not venues %}disabled{% endif %}><option value="">Select a venue</option>{% for venue in venues %}<option value="{{ venue.id }}">{{ venue.name }} · capacity {{ venue.capacity }}</option>{% endfor %}</select></label>
+      <label>Starts (IST)<input type="datetime-local" name="start_time" required></label>
+      <label>Ends (IST)<input type="datetime-local" name="end_time" required></label>
+      <label>Registration opens (optional)<input type="datetime-local" name="registration_start"></label>
+      <label>Registration closes (optional)<input type="datetime-local" name="registration_end"></label>
+      <label>Maximum participants (optional)<input type="number" min="1" name="max_participants" placeholder="Venue capacity applies" value="{{ saved_plan.get('estimated_attendance', '') if saved_plan else '' }}"></label>
+      <label class="span-two">Description<textarea name="description" rows="4" placeholder="What should attendees know?">{{ saved_plan.get('description', '') if saved_plan else '' }}</textarea></label>
+      <label>Food requirements (optional)<textarea name="food_requirements" rows="2">{{ saved_plan.get('food_requirements', '') if saved_plan else '' }}</textarea></label>
+      <label>Equipment requirements (optional)<textarea name="equipment_requirements" rows="2">{{ saved_plan.get('equipment_requirements', '') if saved_plan else '' }}</textarea></label>
+    </div>
+    <div class="toggle-list">
+      <label class="check-row"><input type="checkbox" name="is_public" value="yes" checked><span><strong>Public event</strong><small>Show this event in the public event directory.</small></span></label>
+      <label class="check-row"><input type="checkbox" name="ticket_required" value="yes" checked><span><strong>Ticket required</strong><small>Mark the event as requiring a ticket.</small></span></label>
+      <label class="check-row"><input type="checkbox" name="approval_required" value="yes" checked><span><strong>Administrator approval required</strong><small>Keep the event unpublished until an administrator approves it.</small></span></label>
+    </div>
+
+
+    <section class="dashboard-panel" aria-labelledby="evai-plan-heading">
+      <div class="eyebrow">AI EVENT PLANNER</div>
+      <h2 id="evai-plan-heading">Plan it with EvAi</h2>
+      <p class="muted">Generate a draft plan, then review it before using it.</p>
+      <div class="form-grid">
+        <label>Audience
+          <input id="evai-audience" maxlength="200" value="College students">
+        </label>
+        <label>Estimated budget
+          <input id="evai-budget" maxlength="100" placeholder="e.g. ₹10,000">
+        </label>
+        <label>Event duration
+          <input id="evai-duration" maxlength="100" placeholder="e.g. 3 hours">
+        </label>
+        <label class="span-two">Goals and special requirements
+          <textarea id="evai-goals" rows="3" maxlength="2000"
+            placeholder="What should the event achieve?"></textarea>
+        </label>
+      </div>
+      <button class="button button-secondary" id="evai-plan-button" type="button">
+        Generate plan with EvAi
+      </button>
+      <div id="evai-plan-results" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="dashboard-panel" aria-labelledby="evai-clash-heading">
+      <div class="eyebrow">YOUR CAMPUS COPILOT</div>
+      <h2 id="evai-clash-heading">EvAi schedule check</h2>
+      <p class="muted">Check for overlapping events at this venue or events you are hosting.</p>
+      <button class="button button-secondary" id="evai-clash-check" type="button">Check schedule clashes</button>
+      <div id="evai-clash-results" role="status" aria-live="polite"></div>
+    </section>
+
+    <button class="button" type="submit" {% if not venues %}disabled{% endif %}>Create event <span>↗</span></button>
+  </form>
+</section>
+
+<script id="evai-planner-script">
+(() => {
+  const button = document.getElementById("evai-plan-button");
+  const results = document.getElementById("evai-plan-results");
+  const eventForm = document.querySelector(".event-form");
+  if (!button || !results || !eventForm) return;
+
+  const addText = (parent, tag, value) => {
+    const element = document.createElement(tag);
+    element.textContent = value == null ? "" : String(value);
+    parent.appendChild(element);
+    return element;
+  };
+
+  button.addEventListener("click", async () => {
+    const formData = new FormData(eventForm);
+    const title = String(formData.get("title") || "").trim();
+    if (!title) {
+      results.textContent = "Enter an event title in the main form first.";
+      return;
+    }
+
+    results.replaceChildren();
+    button.disabled = true;
+    button.textContent = "EvAi is planning…";
+
+    try {
+      const csrf = eventForm.querySelector('input[name="csrf_token"]')?.value || "";
+      const response = await fetch("{{ url_for('evai.plan_event') }}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "X-CSRFToken": csrf
+        },
+        body: JSON.stringify({
+          title,
+          event_type: formData.get("event_type") || "general",
+          audience: document.getElementById("evai-audience").value,
+          goals: document.getElementById("evai-goals").value,
+          budget: document.getElementById("evai-budget").value || "not specified",
+          duration: document.getElementById("evai-duration").value || "not specified"
+        })
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        results.textContent = payload.error || "EvAi could not generate a plan.";
+        return;
+      }
+
+      const plan = payload.plan;
+      const card = document.createElement("article");
+      card.className = "event-card";
+      addText(card, "h3", plan.title);
+      addText(card, "p", plan.description);
+      addText(card, "h4", "Objectives");
+      const objectives = document.createElement("ul");
+      (plan.objectives || []).forEach(item => addText(objectives, "li", item));
+      card.appendChild(objectives);
+
+      addText(card, "h4", "Suggested schedule");
+      const schedule = document.createElement("ul");
+      (plan.schedule || []).forEach(item =>
+        addText(schedule, "li", (item.time || "") + " — " + (item.activity || ""))
+      );
+      card.appendChild(schedule);
+
+      addText(card, "h4", "Equipment");
+      const equipment = document.createElement("ul");
+      (plan.equipment_requirements || []).forEach(item => addText(equipment, "li", item));
+      card.appendChild(equipment);
+
+      addText(card, "h4", "Food");
+      const food = document.createElement("ul");
+      (plan.food_requirements || []).forEach(item => addText(food, "li", item));
+      card.appendChild(food);
+
+      addText(card, "p", "Estimated attendance: " +
+        (Number.isFinite(Number(plan.estimated_attendance))
+          ? Number(plan.estimated_attendance) : "Not specified"));
+
+      addText(card, "h4", "Planning checklist");
+      const checklist = document.createElement("ul");
+      (plan.planning_checklist || []).forEach(item => addText(checklist, "li", item));
+      card.appendChild(checklist);
+
+      addText(card, "h4", "Risks and mitigations");
+      const risks = document.createElement("ul");
+      (plan.risks || []).forEach(item =>
+        addText(risks, "li", (item.risk || "") + " — " + (item.mitigation || ""))
+      );
+      card.appendChild(risks);
+
+      const apply = document.createElement("button");
+      apply.type = "button";
+      apply.className = "button";
+      apply.textContent = "Use suggestions in event form";
+      apply.addEventListener("click", () => {
+        eventForm.elements.title.value = plan.title || title;
+        eventForm.elements.description.value = plan.description || "";
+        eventForm.elements.equipment_requirements.value =
+          (plan.equipment_requirements || []).join("\n");
+        eventForm.elements.food_requirements.value =
+          (plan.food_requirements || []).join("\n");
+        results.setAttribute("data-applied", "true");
+        apply.textContent = "Suggestions copied into form";
+      });
+      card.appendChild(apply);
+
+      results.appendChild(card);
+      addText(results, "p", "Review all AI-generated details before creating your event.");
+    } catch (error) {
+      results.textContent = "Unable to reach EvAi. Please try again.";
+    } finally {
+      button.disabled = false;
+      button.textContent = "Generate plan with EvAi";
+    }
+  });
+})();
+</script>
+
+<script id="evai-clash-script">
+(() => {
+  const button = document.getElementById("evai-clash-check");
+  const results = document.getElementById("evai-clash-results");
+  const form = document.querySelector(".event-form");
+  if (!button || !results || !form) return;
+
+  button.addEventListener("click", async () => {
+    results.replaceChildren();
+    const data = new FormData(form);
+    button.disabled = true;
+    button.textContent = "Checking schedule…";
+
+    try {
+      const csrf = form.querySelector('input[name="csrf_token"]')?.value || "";
+      const response = await fetch("{{ url_for('evai.clashes') }}", {
+        method: "POST",
+        body: data,
+        headers: {
+          "Accept": "application/json",
+          "X-CSRFToken": csrf
+        }
+      });
+      const payload = await response.json();
+
+      if (!response.ok || !payload.ok) {
+        results.textContent = payload.error || "Could not check the schedule.";
+        return;
+      }
+
+      const summary = document.createElement("p");
+      summary.textContent = payload.message;
+      results.appendChild(summary);
+
+      for (const conflict of payload.conflicts) {
+        const card = document.createElement("article");
+        card.className = "event-card";
+
+        const heading = document.createElement("h3");
+        heading.textContent = conflict.title;
+        card.appendChild(heading);
+
+        const details = document.createElement("p");
+        details.textContent =
+          "Venue: " + conflict.venue +
+          " · Status: " + conflict.status +
+          " · Conflict: " + conflict.conflicts.join(" and ");
+        card.appendChild(details);
+
+        const timing = document.createElement("p");
+        timing.textContent =
+          "Starts: " + (conflict.start_time || "Not specified") +
+          " · Ends: " + (conflict.end_time || "Not specified");
+        card.appendChild(timing);
+
+        results.appendChild(card);
+      }
+    } catch (error) {
+      results.textContent = "Unable to reach EvAi. Please try again.";
+    } finally {
+      button.disabled = false;
+      button.textContent = "Check schedule clashes";
+    }
+  });
+})();
+</script>
+
+{% endblock %}

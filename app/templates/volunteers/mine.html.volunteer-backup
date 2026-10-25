@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}My Volunteer Applications | CampusHub{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">VOLUNTEER PORTAL</p>
+  <h1>My applications</h1>
+  <p>Track your volunteer applications and decisions.</p>
+</section>
+<section class="event-list">
+  {% for application in applications %}
+  <article class="event-card">
+    <p class="eyebrow">{{ application.status|replace('_', ' ')|title }}</p>
+    <h2><a href="{{ url_for('events.detail', event_id=application.event_id) }}">{{ application.event.title }}</a></h2>
+    <p>{{ application.message or "No message provided." }}</p>
+    <p class="muted">Submitted: {{ application.created_at }}</p>
+  </article>
+  {% else %}
+  <p>You haven't submitted any volunteer applications yet.</p>
+  {% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+.saved-wrap{max-width:950px;margin:auto;padding:30px 0 50px}
+.saved-kicker{color:#b69aff;font-size:12px;font-weight:800;letter-spacing:3px}
+.saved-wrap h1{font-size:clamp(32px,5vw,46px);margin:12px 0}
+.saved-intro{opacity:.7;line-height:1.7}
+.saved-card{background:#17141e;border:1px solid #383142;border-radius:16px;padding:22px;margin:18px 0}
+.saved-card h2{margin-top:0}
+.saved-date{font-size:12px;opacity:.6}
+.saved-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.saved-button{border:0;border-radius:9px;padding:10px 15px;background:#b69aff;color:#171020;font-weight:800;cursor:pointer}
+.saved-delete{background:transparent;border:1px solid #76515f;color:#ffb6c5}
+.saved-empty{padding:40px 20px;text-align:center;border:1px dashed #51465f;border-radius:16px}
+</style>
+
+<div class="saved-wrap">
+  <div class="saved-kicker">CAMPUSHUB · EVAi WORKSPACE</div>
+  <h1>Your <span style="color:#b69aff">Saved Plans.</span></h1>
+  <p class="saved-intro">Keep your ideas, revisit your planning details, and reuse plans when you're ready to create an event.</p>
+
+  {% if plans %}
+    {% for item in plans %}
+      <article class="saved-card">
+        <h2>{{ item.name }}</h2>
+        <p class="saved-date">Last updated {{ item.updated_at.strftime("%d %b %Y, %I:%M %p") }}</p>
+        <p>{{ item.plan_json|tojson if false else '' }}</p>
+        <div class="saved-actions">
+          <button class="saved-button" type="button"
+            onclick="viewPlan({{ item.id }})">View plan</button>
+          <form method="post"
+            action="{{ url_for('evai.delete_saved_plan', plan_id=item.id) }}"
+            onsubmit="return confirm('Delete this saved plan?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="saved-button saved-delete" type="submit">Delete</button>
+          </form>
+        </div>
+        <div id="saved-plan-{{ item.id }}" hidden
+             data-plan="{{ item.plan_json|forceescape }}">
+        </div>
+      </article>
+    {% endfor %}
+  {% else %}
+    <section class="saved-empty">
+      <div style="font-size:40px">✦</div>
+      <h2>No saved plans yet</h2>
+      <p>Generate an event plan with EvAi and save it to see it here.</p>
+      <a class="button" href="{{ url_for('evai.planner_page') }}">Open EvAi Planner</a>
+    </section>
+  {% endif %}
+</div>
+
+<script>
+function viewPlan(id) {
+  const box = document.getElementById("saved-plan-" + id);
+  if (!box) return;
+  const existing = box.querySelector(".saved-details");
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  let plan;
+  try {
+    plan = JSON.parse(box.dataset.plan);
+  } catch (_) {
+    alert("This saved plan could not be read.");
+    return;
+  }
+
+  const details = document.createElement("div");
+  details.className = "saved-details";
+  const heading = document.createElement("h3");
+  heading.textContent = plan.title || "Event plan";
+  details.appendChild(heading);
+
+  const description = document.createElement("p");
+  description.textContent = plan.description || "";
+  details.appendChild(description);
+
+  function addList(title, values) {
+    const h = document.createElement("h4");
+    h.textContent = title;
+    details.appendChild(h);
+    const ul = document.createElement("ul");
+    (values || []).forEach(value => {
+      const li = document.createElement("li");
+      li.textContent = typeof value === "string"
+        ? value
+        : [value.time, value.activity, value.risk, value.mitigation]
+            .filter(Boolean).join(" — ");
+      ul.appendChild(li);
+    });
+    details.appendChild(ul);
+  }
+
+  addList("Objectives", plan.objectives);
+  addList("Schedule", plan.schedule);
+  addList("Equipment", plan.equipment_requirements);
+  addList("Food", plan.food_requirements);
+  addList("Checklist", plan.planning_checklist);
+  addList("Risks and mitigations", plan.risks);
+
+  const useLink = document.createElement("a");
+  useLink.className = "saved-button";
+  useLink.href = "{{ url_for('events.create') }}?saved_plan_id=" + encodeURIComponent(id);
+  useLink.textContent = "Use plan in event creation";
+  useLink.style.display = "inline-block";
+  useLink.style.textDecoration = "none";
+  useLink.style.marginTop = "12px";
+  details.appendChild(useLink);
+
+  box.appendChild(details);
+  box.hidden = false;
+}
+</script>
+{% endblock %}

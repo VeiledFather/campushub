@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}CampusHub — Your campus, connected{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-copy">
+    <div class="eyebrow"><span class="pulse"></span> YOUR CAMPUS, REIMAGINED</div>
+    <h1>Campus life,<br>in <span class="gradient-text">one place.</span></h1>
+    <p class="hero-description">Discover events, find your people, stay in the loop, and make your time on campus count.</p>
+    <div class="hero-actions">
+      {% if current_user.is_authenticated %}
+        <a class="button" href="{{ url_for('main.dashboard') }}">Open your dashboard <span>↗</span></a>
+      {% else %}
+        <a class="button" href="{{ url_for('auth.register') }}">Get started <span>↗</span></a>
+        <a class="button button-quiet" href="{{ url_for('auth.login') }}">I already have an account</a>
+      {% endif %}
+    </div>
+    <div class="trust-line"><span class="trust-dot"></span> One hub. Every opportunity.</div>
+  </div>
+  <div class="hero-art" aria-label="CampusHub event preview">
+    <div class="orb orb-one"></div><div class="orb orb-two"></div>
+    <div class="preview-card preview-main">
+      <div class="preview-top"><span class="mini-label">CAMPUS SPOTLIGHT</span><span class="live-dot">● LIVE</span></div>
+      <div class="event-illustration"><span>✳</span><span class="illustration-star">✦</span></div>
+      <div class="preview-category">THE NEXT BIG THING</div>
+      <h3>Your next chapter<br>starts here.</h3>
+      <div class="preview-bottom"><span>Events · People · Ideas</span><span class="arrow-circle">↗</span></div>
+    </div>
+    <div class="floating-card float-top"><span class="float-icon">✦</span><div><strong>Find your people</strong><small>Make campus yours</small></div></div>
+    <div class="floating-card float-bottom"><span class="float-icon purple">✧</span><div><strong>Meet EvAi</strong><small>Your event-planning assistant</small></div></div>
+  </div>
+</section>
+
+<section class="section-heading">
+  <div><div class="eyebrow">WHAT'S HAPPENING</div><h2>Made for campus moments.</h2></div>
+  <span class="section-note">Your campus story starts here.</span>
+</section>
+
+{% if events %}
+<section class="event-grid">
+  {% for event in events %}
+  <article class="event-card">
+    <span class="event-tag">{{ event.status|title }}</span>
+    <h3>{{ event.title }}</h3>
+    <p>{{ event.description or "Discover the details and get involved." }}</p>
+    <div class="event-meta">{{ event.start_at.strftime('%d %b %Y · %I:%M %p') if event.start_at else "Date to be announced" }}</div>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="empty-events">
+  <div class="empty-icon">✳</div>
+  <h3>Your next favourite event belongs here.</h3>
+  <p>Campus events will appear here as organisers publish them.</p>
+</section>
+{% endif %}
+
+<section class="evai-banner">
+  <div class="evai-symbol">✳</div>
+  <div><div class="eyebrow">MEET YOUR CAMPUS COPILOT</div><h2>Big idea? <span class="gradient-text">EvAi it.</span></h2>
+  <p>Your AI Event Assistant for planning smarter events and spotting schedule clashes.</p></div>
+  <span class="evai-wordmark">EvAi<span>✦</span></span>
+</section>
+{% endblock %}

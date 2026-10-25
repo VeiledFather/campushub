@@ -1,0 +1,85 @@
+import logging
+import os
+
+from flask import Flask
+from app.config import Config
+from app.extensions import db, login_manager, migrate, csrf
+
+
+def create_app(config_class=Config):
+    application = Flask(__name__, instance_relative_config=True)
+    if isinstance(config_class, dict):
+        application.config.from_mapping(config_class)
+    else:
+        application.config.from_object(config_class)
+
+    if not application.config.get("SECRET_KEY"):
+        raise RuntimeError("SECRET_KEY is missing. Configure it in .env.")
+
+    os.makedirs(application.instance_path, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    db.init_app(application)
+    login_manager.init_app(application)
+    migrate.init_app(application, db)
+    csrf.init_app(application)
+
+    login_manager.login_view = "auth.login"
+    login_manager.login_message = "Please log in to continue."
+    login_manager.login_message_category = "info"
+
+    @application.context_processor
+    def inject_unread_notification_count():
+        from flask_login import current_user
+        from sqlalchemy import func
+        from app.models import Notification
+
+        if not current_user.is_authenticated:
+            return {"unread_notification_count": 0}
+
+        count = (
+            db.session.query(func.count(Notification.id))
+            .filter(
+                Notification.recipient_id == current_user.id,
+                Notification.is_read.is_(False),
+            )
+            .scalar()
+        )
+        return {"unread_notification_count": count or 0}
+
+    # Import models so SQLAlchemy registers every table.
+    from app import models as _models
+
+    from app.routes.health import health_bp
+    from app.routes.auth import auth_bp
+    from app.routes.main import main_bp
+    from app.routes.events import events_bp
+    from app.routes.tickets import tickets_bp
+    from app.routes.evai import evai_bp
+    from app.routes.volunteers import volunteers_bp
+    from app.routes.academic import academic_bp
+
+    application.register_blueprint(health_bp)
+    application.register_blueprint(auth_bp, url_prefix="/auth")
+    application.register_blueprint(main_bp)
+    application.register_blueprint(events_bp)
+    application.register_blueprint(tickets_bp)
+    application.register_blueprint(evai_bp)
+    application.register_blueprint(volunteers_bp)
+    application.register_blueprint(academic_bp)
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        from app.models import User
+        try:
+            return db.session.get(User, int(user_id))
+        except (TypeError, ValueError):
+            return None
+
+    from app.routes.organizer_applications import organizer_applications_bp
+    app.register_blueprint(organizer_applications_bp)
+
+    return application

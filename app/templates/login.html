@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Log in · CampusHub{% endblock %}
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-aside"><div class="eyebrow">GOOD TO HAVE YOU BACK</div><h1>Your campus<br>is waiting.</h1><p>Pick up where you left off. Your people, events, and opportunities are all here.</p><div class="auth-aside-mark">C<span>H</span></div></div>
+  <div class="auth-card"><div class="eyebrow">WELCOME BACK</div><h2>Log in to CampusHub</h2><p class="muted">Enter your account details to continue.</p>
+<form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Email address<input type="email" name="email" placeholder="you@campus.edu" autocomplete="email" required maxlength="255"></label>
+      <label>Password<input type="password" name="password" placeholder="Your password" autocomplete="current-password" required></label>
+      <button class="button full-button" type="submit">Log in <span>↗</span></button>
+    </form>
+    <p class="auth-switch">New to CampusHub? <a href="{{ url_for('auth.register') }}">Create an account</a></p>
+    <p class="auth-switch">Already have a student profile and assigned batch?
+      <a href="{{ url_for('auth.login', next=url_for('academic.student_id_verification')) }}">Log in and verify your student ID</a>
+    </p>
+  </div>
+</section>
+{% endblock %}

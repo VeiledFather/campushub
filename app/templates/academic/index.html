@@ -1,0 +1,611 @@
+{% extends "base.html" %}
+{% block title %}Academic Administration · CampusHub{% endblock %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CAMPUSHUB MANAGEMENT</p>
+    <h1>Academic Administration</h1>
+    <p class="muted">Manage academic structure, campus identities, faculty profiles, and event venues.</p>
+  </div>
+</section>
+
+<section class="stats-grid">
+  <article class="stat-card">
+    <span>Departments</span>
+    <strong>{{ departments|length }}</strong>
+  </article>
+  <article class="stat-card">
+    <span>Batches</span>
+    <strong>{{ batches|length }}</strong>
+  </article>
+  <article class="stat-card">
+    <span>Student profiles</span>
+    <strong>{{ students|length }}</strong>
+  </article>
+  <article class="stat-card">
+    <span>Teacher profiles</span>
+    <strong>{{ teachers|length }}</strong>
+  </article>
+  <article class="stat-card">
+    <span>Venues</span>
+    <strong>{{ venues|length }}</strong>
+  </article>
+</section>
+
+<section class="card">
+  <h2>Departments</h2>
+  <form method="post" action="{{ url_for('academic.create_department') }}" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Department name
+      <input name="name" maxlength="160" placeholder="e.g. Computer Science" required>
+    </label>
+    <label>Department code
+      <input name="code" maxlength="30" placeholder="e.g. CSE" required>
+    </label>
+    <button class="button" type="submit">Add department</button>
+  </form>
+  {% if departments %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Name</th><th>Code</th><th>Status</th><th>Batches</th></tr></thead>
+    <tbody>
+    {% for department in departments %}
+      <tr>
+        <td>{{ department.name }}</td>
+        <td>{{ department.code }}</td>
+        <td>{{ "Active" if department.is_active else "Inactive" }}</td>
+        <td>{{ department.batches|length }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No departments yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Academic batches</h2>
+  <form method="post" action="{{ url_for('academic.create_batch') }}" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Batch name
+      <input name="name" maxlength="100" placeholder="e.g. CSE Year 1" required>
+    </label>
+    <label>Unique batch code
+      <input name="batch_code" maxlength="40" placeholder="e.g. CSE-2026-A" pattern="[A-Za-z0-9-]+" required>
+    </label>
+    <label>Academic year
+      <input name="academic_year" maxlength="30" placeholder="2026-2027" required>
+    </label>
+    <label>Department
+      <select name="department_id" required>
+        <option value="">Choose a department</option>
+        {% for department in departments if department.is_active %}
+          <option value="{{ department.id }}">{{ department.name }} ({{ department.code }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Homeroom teacher (optional)
+      <select name="teacher_id">
+        <option value="">Assign later</option>
+        {% for teacher in teachers if not teacher.homeroom_batch_id %}
+          <option value="{{ teacher.id }}">{{ teacher.user.full_name }} — {{ teacher.faculty_id }}{% if not teacher.id_verified %} (unverified){% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="button" type="submit">Add batch</button>
+  </form>
+  {% if batches %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Batch</th><th>Batch code</th><th>Academic year</th><th>Department</th><th>Enrollment</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for batch in batches %}
+      <tr>
+        <td>
+          <strong>{{ batch.name }}</strong>
+          <details>
+            <summary>View roster ({{ batch.students|length }})</summary>
+            {% if batch.students %}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Student</th>
+                      <th>Campus ID</th>
+                      <th>College ID</th>
+                      <th>Account</th>
+                      <th>ID verification</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for enrolled_student in batch.students|sort(attribute="user.full_name") %}
+                      <tr>
+                        <td>
+                          {{ enrolled_student.user.full_name }}<br>
+                          <small>{{ enrolled_student.user.email }}</small>
+                        </td>
+                        <td>{{ enrolled_student.campus_id }}</td>
+                        <td>{{ enrolled_student.college_id }}</td>
+                        <td>{{ "Active" if enrolled_student.user.is_active else "Suspended / inactive" }}</td>
+                        <td>{{ "Verified" if enrolled_student.id_verified else "Unverified" }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="muted">No students are enrolled in this batch yet.</p>
+            {% endif %}
+          </details>
+        </td>
+        <td><code>{{ batch.batch_code }}</code></td>
+        <td>{{ batch.academic_year }}</td>
+        <td>{{ batch.department.name }}</td>
+        <td>
+          <strong>{{ batch.students|length }}</strong> student{{ "" if batch.students|length == 1 else "s" }}
+        </td>
+        <td>
+          <form method="post" action="{{ url_for('academic.edit_batch', batch_id=batch.id) }}" class="form-grid">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <label>Batch name
+              <input name="name" maxlength="100" value="{{ batch.name }}" required>
+            </label>
+            <label>Unique batch code
+              <input name="batch_code" maxlength="40" value="{{ batch.batch_code }}" pattern="[A-Za-z0-9-]+" required>
+            </label>
+
+            <label>Academic year
+              <input name="academic_year" maxlength="30" value="{{ batch.academic_year }}" required>
+            </label>
+
+            <label>Department
+              <select name="department_id" required>
+                {% for department in departments if department.is_active %}
+                  <option value="{{ department.id }}" {% if batch.department_id == department.id %}selected{% endif %}>
+                    {{ department.name }} ({{ department.code }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label>Homeroom teacher
+              <select name="teacher_id">
+                <option value="">Unassigned</option>
+                {% for teacher in teachers %}
+                  {% if not teacher.homeroom_batch_id or teacher.homeroom_batch_id == batch.id %}
+                    <option value="{{ teacher.id }}" {% if teacher.homeroom_batch_id == batch.id %}selected{% endif %}>{{ teacher.user.full_name }} — {{ teacher.faculty_id }}{% if not teacher.id_verified %} (unverified){% endif %}</option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+            </label>
+            <label>Homeroom room/location
+              <input name="home_room" maxlength="100" value="{{ batch.home_room or '' }}">
+            </label>
+
+            <label>Start date
+              <input type="date" name="start_date" value="{{ batch.start_date.isoformat() if batch.start_date else '' }}">
+            </label>
+
+            <label>End date
+              <input type="date" name="end_date" value="{{ batch.end_date.isoformat() if batch.end_date else '' }}">
+            </label>
+
+            <label>Campus ID expiry
+              <input type="date" name="id_expiry_date" value="{{ batch.id_expiry_date.isoformat() if batch.id_expiry_date else '' }}">
+            </label>
+
+            <button class="button button-small" type="submit">Save batch</button>
+          </form>
+          <p class="muted">Current status: {{ "Active" if batch.is_active else "Inactive" }}</p>
+          <form method="post" action="{{ url_for('academic.set_batch_status', batch_id=batch.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if batch.is_active %}
+              <button class="button button-small" type="submit" name="action" value="deactivate">Deactivate batch</button>
+            {% else %}
+              <button class="button button-small" type="submit" name="action" value="activate">Activate batch</button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No batches yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Student profiles</h2>
+  <form method="post" action="{{ url_for('academic.create_student_profile') }}" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Student account
+      <select name="user_id" required>
+        <option value="">Choose a student account</option>
+        {% for user in student_users if not user.student %}
+          <option value="{{ user.id }}">{{ user.full_name }} — {{ user.email }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Campus ID
+      <input name="campus_id" maxlength="80" required>
+    </label>
+    <label>College ID
+      <input name="college_id" maxlength="80" required>
+    </label>
+    <label>Batch
+      <select name="batch_id">
+        <option value="">No batch assigned</option>
+        {% for batch in batches if batch.is_active %}
+          <option value="{{ batch.id }}">{{ batch.name }} — {{ batch.department.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="button" type="submit">Create student profile</button>
+  </form>
+  <section class="card">
+    <h2>Import students from CSV</h2>
+    <p class="muted">
+      Create student accounts and profiles in bulk, or link existing student
+      accounts that do not yet have a student profile.
+    </p>
+
+    <form method="post" action="{{ url_for('academic.import_students_csv') }}"
+          enctype="multipart/form-data" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label>CSV file
+        <input type="file" name="csv_file" accept=".csv,text/csv" required>
+      </label>
+
+      <label>Assign all imported students to a batch (optional)
+        <select name="batch_id">
+          <option value="">No batch assignment</option>
+          {% for batch in batches if batch.is_active %}
+            <option value="{{ batch.id }}">
+              {{ batch.name }} — {{ batch.department.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <button class="button" type="submit">Import student CSV</button>
+    </form>
+
+    <details>
+      <summary>CSV format and requirements</summary>
+      <p>Use these exact column headers in the first row:</p>
+      <pre>full_name,email,campus_id,college_id
+Aarav Sharma,aarav@example.com,CAMPUS-001,COLLEGE-001
+Priya Singh,priya@example.com,CAMPUS-002,COLLEGE-002</pre>
+      <ul>
+        <li>Save the file as UTF-8 CSV, up to 2 MB and 1,000 student rows.</li>
+        <li>Campus IDs and College IDs must be unique.</li>
+        <li>New accounts receive randomly generated passwords; the import does not reveal them.</li>
+        <li>Existing account passwords and login status are preserved.</li>
+        <li>Imported IDs begin unverified. Review and verify them through Academic Admin.</li>
+      </ul>
+    </details>
+  </section>
+
+  <form method="get" action="{{ url_for('academic.index') }}" class="form-grid">
+    <label>Search students
+      <input name="student_search" value="{{ student_search }}" placeholder="Name, email, Campus ID, or College ID">
+    </label>
+
+    <label>Department
+      <select name="department_id">
+        <option value="">All departments</option>
+        {% for department in departments %}
+          <option value="{{ department.id }}" {% if department_filter == department.id %}selected{% endif %}>
+            {{ department.name }} ({{ department.code }})
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Batch
+      <select name="student_batch_id">
+        <option value="">All batches</option>
+        {% for batch in batches %}
+          <option value="{{ batch.id }}" {% if batch_filter == batch.id %}selected{% endif %}>
+            {{ batch.name }} — {{ batch.department.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Verification
+      <select name="verification">
+        <option value="">All verification states</option>
+        <option value="verified" {% if verification_filter == "verified" %}selected{% endif %}>Verified</option>
+        <option value="unverified" {% if verification_filter == "unverified" %}selected{% endif %}>Unverified</option>
+      </select>
+    </label>
+
+    <label>Campus ID status
+      <select name="id_status">
+        <option value="">All ID statuses</option>
+        <option value="active" {% if id_status_filter == "active" %}selected{% endif %}>Active</option>
+        <option value="inactive" {% if id_status_filter == "inactive" %}selected{% endif %}>Inactive</option>
+      </select>
+    </label>
+
+    <div>
+      <button class="button" type="submit">Apply filters</button>
+      <a class="button" href="{{ url_for('academic.index') }}">Clear filters</a>
+    </div>
+  </form>
+
+  <p class="muted">Showing {{ students|length }} matching student profile(s).</p>
+
+  <form id="bulk-enrollment-form" method="post"
+        action="{{ url_for('academic.bulk_enroll_students') }}" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label>Bulk enrollment action
+      <select name="enrollment_action" required>
+        <option value="assign">Assign / transfer to batch</option>
+        <option value="unassign">Remove batch assignment</option>
+      </select>
+    </label>
+
+    <label>Destination batch
+      <select name="batch_id">
+        <option value="">Choose a batch</option>
+        {% for batch in batches if batch.is_active %}
+          <option value="{{ batch.id }}">{{ batch.name }} — {{ batch.department.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <button class="button" type="submit">Apply to selected students</button>
+    <small class="muted">Only selected students are affected. Transfers preserve their Campus IDs and verification status.</small>
+  </form>
+
+  {% if students %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Select</th><th>Student</th><th>Campus ID</th><th>Batch</th><th>Verification</th><th>ID status</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for student in students %}
+      <tr>
+        <td>
+          <input type="checkbox" name="student_ids" value="{{ student.id }}"
+                 form="bulk-enrollment-form" aria-label="Select {{ student.user.full_name }}">
+        </td>
+        <td>
+          <strong>{{ student.user.full_name }}</strong><br>
+          <small>{{ student.user.email }}</small>
+          <details>
+            <summary>View profile</summary>
+            <div class="student-profile-details">
+              <p><strong>Student record:</strong> #{{ student.id }}</p>
+              <p><strong>Campus ID:</strong> {{ student.campus_id }}</p>
+              <p><strong>College ID:</strong> {{ student.college_id }}</p>
+              <p><strong>Department:</strong> {{ student.batch.department.name if student.batch else "Not assigned" }}</p>
+              <p><strong>Batch:</strong> {{ student.batch.name if student.batch else "Not assigned" }}</p>
+              <p><strong>Academic year:</strong> {{ student.batch.academic_year if student.batch else "Not assigned" }}</p>
+              <p><strong>Enrollment status:</strong> {{ "Active" if student.user.is_active else "Suspended / inactive" }}</p>
+              <p><strong>Login suspension flag:</strong> {{ "Suspended" if student.user.is_suspended else "Not suspended" }}</p>
+              <p><strong>Campus ID verification:</strong> {{ "Verified" if student.id_verified else "Unverified" }}</p>
+              <p><strong>Campus ID status:</strong> {{ "Active" if student.campus_id_active else "Inactive" }}</p>
+              <p><strong>ID expiry override:</strong> {{ student.id_expiry_override.strftime("%d %b %Y") if student.id_expiry_override else "Uses batch/default policy" }}</p>
+              {% if student.batch %}
+                <p><strong>Batch start:</strong> {{ student.batch.start_date.strftime("%d %b %Y") if student.batch.start_date else "Not set" }}</p>
+                <p><strong>Batch end:</strong> {{ student.batch.end_date.strftime("%d %b %Y") if student.batch.end_date else "Not set" }}</p>
+                <p><strong>Batch ID expiry:</strong> {{ student.batch.id_expiry_date.strftime("%d %b %Y") if student.batch.id_expiry_date else "Not set" }}</p>
+              {% endif %}
+              <p><strong>Profile created:</strong> {{ student.created_at.strftime("%d %b %Y") if student.created_at else "Unavailable" }}</p>
+              <p><strong>Last profile update:</strong> {{ student.updated_at.strftime("%d %b %Y, %H:%M") if student.updated_at else "Unavailable" }}</p>
+            </div>
+          </details>
+        </td>
+        <td>{{ student.campus_id }}</td>
+        <td>{{ student.batch.name if student.batch else "Unassigned" }}</td>
+        <td>{{ "Verified" if student.id_verified else "Unverified" }}</td>
+        <td>{{ "Active" if student.campus_id_active else "Inactive" }}</td>
+        <td class="action-cell">
+          <details>
+            <summary>Edit student</summary>
+            <form method="post" action="{{ url_for('academic.edit_student_profile', student_id=student.id) }}" class="form-grid">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+              <label>Campus ID
+                <input name="campus_id" maxlength="80" value="{{ student.campus_id }}" required>
+              </label>
+
+              <label>College ID
+                <input name="college_id" maxlength="80" value="{{ student.college_id }}" required>
+              </label>
+
+              <label>Batch
+                <select name="batch_id">
+                  <option value="">No batch assigned</option>
+                  {% for batch in batches if batch.is_active or student.batch_id == batch.id %}
+                    <option value="{{ batch.id }}" {% if student.batch_id == batch.id %}selected{% endif %}>
+                      {{ batch.name }} — {{ batch.department.name }}{% if not batch.is_active %} (Inactive){% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </label>
+
+              <button class="button button-small" type="submit">Save student</button>
+            </form>
+          </details>
+
+          <form method="post" action="{{ url_for('academic.verify_student_id', student_id=student.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button button-small" name="action" value="{{ 'unverify' if student.id_verified else 'verify' }}" type="submit">
+              {{ "Revoke verification" if student.id_verified else "Verify ID" }}
+            </button>
+          </form>
+
+          <form method="post" action="{{ url_for('academic.resend_student_password_link', student_id=student.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button button-small" type="submit">Send password setup/reset link</button>
+          </form>
+
+          <form method="post" action="{{ url_for('academic.set_student_account_status', student_id=student.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if student.user.is_active %}
+              <button class="button button-small" name="action" value="suspend" type="submit">Suspend account</button>
+            {% else %}
+              <button class="button button-small" name="action" value="reactivate" type="submit">Reactivate account</button>
+            {% endif %}
+          </form>
+
+          <form method="post" action="{{ url_for('academic.set_campus_id_status', student_id=student.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button button-small" name="action" value="{{ 'deactivate' if student.campus_id_active else 'activate' }}" type="submit">
+              {{ "Deactivate ID" if student.campus_id_active else "Activate ID" }}
+            </button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No student profiles yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Teacher profiles</h2>
+  <form method="post" action="{{ url_for('academic.create_teacher_profile') }}" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Teacher account
+      <select name="user_id" required>
+        <option value="">Choose a teacher account</option>
+        {% for user in teacher_users if not user.teacher %}
+          <option value="{{ user.id }}">{{ user.full_name }} — {{ user.email }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Faculty ID
+      <input name="faculty_id" maxlength="80" required>
+    </label>
+    <label>Official email
+      <input type="email" name="official_email" maxlength="255" required>
+    </label>
+    <label>Faculty role
+      <input name="faculty_role" maxlength="100" placeholder="e.g. Lecturer">
+    </label>
+    <label>Homeroom batch
+      <select name="batch_id">
+        <option value="">None</option>
+        {% for batch in batches if batch.is_active %}
+          <option value="{{ batch.id }}">{{ batch.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="button" type="submit">Create teacher profile</button>
+  </form>
+  {% if teachers %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Teacher</th><th>Faculty ID</th><th>Official email</th><th>Homeroom</th><th>Verification</th><th>Action</th></tr></thead>
+    <tbody>
+    {% for teacher in teachers %}
+      <tr>
+        <td>{{ teacher.user.full_name }}<br><small>{{ teacher.user.email }}</small></td>
+        <td>{{ teacher.faculty_id }}</td>
+        <td>{{ teacher.official_email }}</td>
+        <td>{{ teacher.homeroom_batch.name if teacher.homeroom_batch else "Unassigned" }}</td>
+        <td>{{ "Verified" if teacher.id_verified else "Unverified" }}</td>
+        <td>
+          <form method="post" action="{{ url_for('academic.edit_teacher_profile', teacher_id=teacher.id) }}" class="form-grid">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>Faculty ID
+              <input name="faculty_id" maxlength="80" value="{{ teacher.faculty_id }}" required>
+            </label>
+            <label>Official email
+              <input type="email" name="official_email" maxlength="255" value="{{ teacher.official_email }}" required>
+            </label>
+            <label>Faculty role
+              <input name="faculty_role" maxlength="100" value="{{ teacher.faculty_role or '' }}">
+            </label>
+            <label>Homeroom batch
+              <select name="batch_id">
+                <option value="">None</option>
+                {% for batch in batches if batch.is_active %}
+                  <option value="{{ batch.id }}" {% if teacher.homeroom_batch_id == batch.id %}selected{% endif %}>{{ batch.name }} — {{ batch.department.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button class="button button-small" type="submit">Save profile</button>
+          </form>
+          <form method="post" action="{{ url_for('academic.verify_teacher_id', teacher_id=teacher.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button button-small" name="action" value="{{ 'unverify' if teacher.id_verified else 'verify' }}" type="submit">
+              {{ "Revoke verification" if teacher.id_verified else "Verify faculty" }}
+            </button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No teacher profiles yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Event venues</h2>
+  <form method="post" action="{{ url_for('academic.create_venue') }}" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Venue name
+      <input name="name" maxlength="160" required>
+    </label>
+    <label>Location
+      <input name="location" maxlength="255" placeholder="Building or campus area">
+    </label>
+    <label>Capacity
+      <input name="capacity" type="number" min="1" required>
+    </label>
+    <button class="button" type="submit">Add venue</button>
+  </form>
+  {% if venues %}
+  <div class="table-wrap"><table>
+    <thead>
+      <tr>
+        <th>Venue details</th>
+        <th>Availability</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for venue in venues %}
+      <tr>
+        <td>
+          <form method="post" action="{{ url_for('academic.edit_venue', venue_id=venue.id) }}" class="form-grid">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>Name
+              <input name="name" maxlength="160" value="{{ venue.name }}" required>
+            </label>
+            <label>Location
+              <input name="location" maxlength="255" value="{{ venue.location or '' }}">
+            </label>
+            <label>Capacity
+              <input name="capacity" type="number" min="1" value="{{ venue.capacity }}" required>
+            </label>
+            <label>
+              <input type="checkbox" name="is_event_venue" {% if venue.is_event_venue %}checked{% endif %}>
+              Eligible for events
+            </label>
+            <button class="button" type="submit">Save changes</button>
+          </form>
+        </td>
+        <td>
+          <strong>{{ "Active" if venue.is_active else "Inactive" }}</strong><br>
+          <span class="muted">{{ "Event venue" if venue.is_event_venue else "Not eligible for events" }}</span>
+        </td>
+        <td>
+          <form method="post" action="{{ url_for('academic.set_venue_status', venue_id=venue.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="{{ 'deactivate' if venue.is_active else 'activate' }}">
+            <button class="button" type="submit">
+              {{ "Deactivate" if venue.is_active else "Activate" }}
+            </button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No venues yet.</p>{% endif %}
+</section>
+{% endblock %}

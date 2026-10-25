@@ -1,0 +1,16 @@
+
+/* EvAi responsive launcher: safe viewport spacing on desktop and mobile. */
+#evai-widget, .evai-widget, #evai-float, .evai-floating-button,
+.evai-launcher, [data-evai-widget], #evai-toggle, .evai-toggle,
+#evai-assistant-button, .evai-assistant-button {
+  max-width: calc(100vw - 24px) !important;
+  box-sizing: border-box;
+  touch-action: none;
+}
+@media (max-width: 600px) {
+  #evai-widget, .evai-widget, #evai-float, .evai-floating-button,
+  .evai-launcher, [data-evai-widget], #evai-toggle, .evai-toggle,
+  #evai-assistant-button, .evai-assistant-button {
+    max-width: calc(100vw - 24px) !important;
+  }
+}

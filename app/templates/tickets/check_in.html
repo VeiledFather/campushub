@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Event Check-in | CampusHub{% endblock %}
+
+{% block content %}
+<style>
+.scanner-page { max-width:760px; margin:36px auto 55px; }
+.scanner-page h1 { font:800 clamp(30px,4vw,42px)/1.2 Manrope,sans-serif; letter-spacing:-1.5px; margin:10px 0; }
+.scanner-card { background:#fff; border:1px solid var(--line); border-radius:20px; padding:24px; margin-top:22px; }
+.scanner-preview { width:100%; max-width:520px; margin:18px auto; overflow:hidden; border-radius:14px; background:#17151f; }
+.scanner-preview video { width:100%; display:block; }
+.scanner-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:15px; }
+.scanner-message { font-size:13px; margin-top:12px; color:var(--muted); overflow-wrap:anywhere; }
+.scanner-divider { border:0; border-top:1px solid var(--line); margin:24px 0; }
+.scanner-form { display:grid; gap:12px; }
+.scanner-form label { font-size:12px; font-weight:700; }
+.scanner-form input { width:100%; padding:13px; border:1px solid var(--line); border-radius:10px; }
+</style>
+
+<section class="scanner-page">
+  <p class="eyebrow">CAMPUSHUB · EVENT OPERATIONS</p>
+  <h1>Ticket check-in</h1>
+  <p class="muted">Scan an attendee's QR ticket or enter the ticket token manually.</p>
+
+  <section class="scanner-card">
+    <h2>Scan QR ticket</h2>
+    <p class="muted">Allow camera access when prompted. Camera scanning requires HTTPS or localhost.</p>
+
+    <div class="scanner-preview" id="scanner-preview" hidden></div>
+
+    <div class="scanner-actions">
+      <button class="button button-primary" type="button" id="start-scanner">Start camera</button>
+      <button class="button button-quiet" type="button" id="stop-scanner" hidden>Stop camera</button>
+    </div>
+    <p class="scanner-message" id="scanner-message" role="status" aria-live="polite">Camera is off. Manual entry is always available below.</p>
+
+    <hr class="scanner-divider">
+
+    <h2>Enter ticket token</h2>
+    <form method="post" class="scanner-form" id="checkin-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="token">QR ticket token</label>
+      <input id="token" name="token" required autocomplete="off" placeholder="Scan a QR code or type the token">
+      <button class="button button-primary" type="submit">Validate and check in</button>
+    </form>
+  </section>
+</section>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(() => {
+  const startButton = document.getElementById("start-scanner");
+  const stopButton = document.getElementById("stop-scanner");
+  const preview = document.getElementById("scanner-preview");
+  const message = document.getElementById("scanner-message");
+  const tokenInput = document.getElementById("token");
+  const form = document.getElementById("checkin-form");
+
+  let scanner = null;
+  let running = false;
+  let submitting = false;
+
+  function setMessage(text) {
+    message.textContent = text;
+  }
+
+  async function stopScanner() {
+    if (scanner && running) {
+      try {
+        await scanner.stop();
+        await scanner.clear();
+      } catch (error) {
+        console.warn("Scanner shutdown:", error);
+      }
+    }
+    scanner = null;
+    running = false;
+    preview.hidden = true;
+    preview.replaceChildren();
+    startButton.hidden = false;
+    stopButton.hidden = true;
+  }
+
+  async function handleScan(decodedText) {
+    if (submitting) return;
+    submitting = true;
+
+    // Ticket QR codes currently contain the raw ticket token.
+    // Never submit arbitrary URLs as ticket tokens.
+    const token = decodedText.trim();
+    if (!token || /^https?:\/\//i.test(token)) {
+      submitting = false;
+      setMessage("This QR code doesn't look like a ticket token. Try the attendee's CampusHub ticket.");
+      return;
+    }
+
+    tokenInput.value = token;
+    setMessage("QR detected. Submitting ticket for server-side validation…");
+    await stopScanner();
+    form.requestSubmit();
+  }
+
+  startButton.addEventListener("click", async () => {
+    if (!window.Html5Qrcode) {
+      setMessage("The scanner library couldn't load. Check your internet connection or enter the token manually.");
+      return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setMessage("Camera access isn't available in this browser or connection. Use HTTPS or localhost, or enter the token manually.");
+      return;
+    }
+
+    startButton.disabled = true;
+    setMessage("Requesting camera access…");
+    preview.hidden = false;
+
+    try {
+      scanner = new Html5Qrcode("scanner-preview");
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 240, height: 240 }, aspectRatio: 1.0 },
+        handleScan,
+        () => {}
+      );
+      running = true;
+      startButton.hidden = true;
+      stopButton.hidden = false;
+      setMessage("Camera active. Hold the attendee's QR code inside the scanning frame.");
+    } catch (error) {
+      scanner = null;
+      preview.hidden = true;
+      setMessage("Couldn't start the camera. Check browser permissions and use HTTPS or localhost. You can still enter the token manually.");
+      console.error("Camera start failed:", error);
+    } finally {
+      startButton.disabled = false;
+    }
+  });
+
+  stopButton.addEventListener("click", async () => {
+    await stopScanner();
+    setMessage("Camera stopped. You can restart it or enter a token manually.");
+  });
+
+  window.addEventListener("pagehide", () => {
+    if (scanner && running) scanner.stop().catch(() => {});
+  });
+})();
+</script>
+{% endblock %}

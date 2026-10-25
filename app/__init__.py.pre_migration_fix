@@ -1,0 +1,36 @@
+import logging
+import os
+
+from flask import Flask, jsonify
+
+from app.config import Config
+from app.extensions import db, login_manager, migrate
+
+
+def create_app(config_class=Config):
+    app = Flask(__name__, instance_relative_config=True)
+    app.config.from_object(config_class)
+
+    if not app.config.get("SECRET_KEY"):
+        if not app.testing:
+            raise RuntimeError(
+                "SECRET_KEY is missing. Configure it in the .env file."
+            )
+
+    os.makedirs(app.instance_path, exist_ok=True)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    db.init_app(app)
+    login_manager.init_app(app)
+    migrate.init_app(app, db)
+
+    login_manager.login_view = "auth.login"
+
+    from app.routes.health import health_bp
+    app.register_blueprint(health_bp)
+
+    return app

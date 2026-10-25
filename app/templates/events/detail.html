@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}{{ event.title }} · CampusHub
+{% endblock %}
+{% block content %}
+
+<!-- EVENT_LIFECYCLE_CONTROLS -->
+{% if can_manage %}
+<div class="card my-3 border-secondary" id="event-lifecycle-controls">
+  <div class="card-body">
+    <h5 class="card-title">Event Lifecycle</h5>
+    <p>Current status:
+      <strong>{{ event.status|replace('_', ' ')|title }}</strong>
+    </p>
+
+    {% if event.status == 'published' %}
+    <form method="POST" action="{{ url_for('events.start_event', event_id=event.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-success">Start Event</button>
+    </form>
+    {% elif event.status == 'ongoing' %}
+    <form method="POST" action="{{ url_for('events.complete_event', event_id=event.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-primary">Complete Event</button>
+    </form>
+    {% elif event.status == 'completed' %}
+    <span class="badge bg-success">Event completed</span>
+    {% else %}
+    <p class="text-muted">Start Event becomes available after publication.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+<!-- /EVENT_LIFECYCLE_CONTROLS -->
+
+
+
+{% if current_user.is_authenticated and current_user.role == 'student'
+      and student_registration and student_registration.ticket %}
+  <p>
+    <a class="button button-primary"
+       href="{{ url_for('tickets.view_ticket', registration_id=student_registration.id) }}">
+      View Your QR Ticket
+    </a>
+  </p>
+{% endif %}
+
+
+{% if current_user.is_authenticated and current_user.role == 'student'
+      and event.status == 'published' and event.is_public %}
+  <p>
+    <a class="button button-primary"
+       href="{{ url_for('volunteers.apply', event_id=event.id) }}">
+      Apply to Volunteer
+    </a>
+  </p>
+{% endif %}
+
+<section class="event-detail">
+  <a class="back-link" href="{{ url_for('events.index') }}">← All events</a>
+  <div class="detail-hero">
+    <div class="eyebrow">{{ event.event_type|upper }} · {{ event.event_code }}</div>
+    <h1>{{ event.title }}</h1>
+    <p>{{ event.description or "Event details will be updated by the organiser." }}</p>
+    <div class="detail-status">Status: <strong>{{ event.status|replace('_',' ')|title }}</strong></div>
+    {% if event.cancellation_reason and (event.status == 'cancelled' or (event.status == 'draft' and event.approval_required)) %}
+      <div class="dashboard-panel">
+        <h3>{{ 'Cancellation reason' if event.status == 'cancelled' else 'Administrator feedback' }}</h3>
+        <p>{{ event.cancellation_reason }}</p>
+      </div>
+    {% endif %}
+  </div>
+  <div class="detail-grid">
+    <article class="dashboard-panel"><div class="eyebrow">WHEN & WHERE</div>
+      <div class="profile-row"><span>Starts</span><strong>{{ event.start_time.strftime('%d %b %Y, %I:%M %p') }} UTC</strong></div>
+      <div class="profile-row"><span>Ends</span><strong>{{ event.end_time.strftime('%d %b %Y, %I:%M %p') }} UTC</strong></div>
+      <div class="profile-row"><span>Venue</span><strong>{{ event.venue.name }}{% if event.venue.location %} · {{ event.venue.location }}{% endif %}</strong></div>
+      <div class="profile-row"><span>Capacity</span><strong>{{ event.max_participants or event.venue.capacity }}</strong></div>
+      <div class="profile-row"><span>Host</span><strong>{{ event.host.full_name }}</strong></div>
+    </article>
+    <article class="dashboard-panel"><div class="eyebrow">JOIN THE EXPERIENCE</div><h2>Be part of it.</h2>
+      {% if event.status == 'published' and event.is_public %}
+        {% if not current_user.is_authenticated %}
+          <p class="muted">Log in with your student account to register.</p><a class="button" href="{{ url_for('auth.login', next=request.path) }}">Log in to register</a>
+        {% elif current_user.role == 'student' %}
+          {% if already_registered %}<p class="status-active">✓ You're registered for this event.</p>
+          {% elif not student %}<p class="muted">A student profile must be linked to your account before registration.</p>
+          {% elif not registration_open %}<p class="muted">Registration is not open right now.</p>
+          {% elif event_full %}<p class="muted">This event has reached its participant limit.</p>
+          {% else %}
+          <form method="post" action="{{ url_for('events.register_for_event', event_id=event.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Register for event ↗</button></form>
+          {% endif %}
+        {% else %}<p class="muted">Your current role does not register as a student.</p>{% endif %}
+      {% else %}<p class="muted">This event is not currently open for public registration.</p>{% endif %}
+
+      {% if can_manage %}
+      <div class="manage-actions">
+        {% if event.status not in ['completed','cancelled','ongoing'] %}
+          <a class="button button-quiet" href="{{ url_for('events.edit', event_id=event.id) }}">Edit Event</a>
+        {% endif %}
+
+        {% if event.status == 'draft' and event.approval_required and event.cancellation_reason %}
+          <form method="post" action="{{ url_for('events.resubmit', event_id=event.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button" type="submit">Resubmit for Approval</button>
+          </form>
+        {% endif %}
+
+        {% if event.status in ['pending_approval','pending','draft'] %}
+          {% if current_user.role in ['admin','super_admin','developer'] %}
+          <form method="post" action="{{ url_for('events.approve', event_id=event.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button button-quiet" type="submit">Approve event</button>
+          </form>
+
+          <form method="post" action="{{ url_for('events.reject', event_id=event.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="reject-reason">Feedback for organiser</label>
+            <textarea id="reject-reason" name="reason" rows="3" maxlength="2000" required placeholder="Explain what needs to change..."></textarea>
+            <button class="button button-quiet" type="submit">Reject with feedback</button>
+          </form>
+          {% endif %}
+        {% endif %}
+
+        {% if event.status in ['draft','approved'] %}
+        <form method="post" action="{{ url_for('events.publish', event_id=event.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="button" type="submit">Publish event</button>
+        </form>
+        {% endif %}
+
+        {% if event.status not in ['completed','cancelled'] %}
+        <form method="post" action="{{ url_for('events.cancel', event_id=event.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label for="cancel-reason">Reason for cancellation</label>
+          <textarea id="cancel-reason" name="reason" rows="3" maxlength="2000" required placeholder="Explain why this event is being cancelled..."></textarea>
+          <button class="button button-quiet" type="submit">Cancel event</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </article>
+  </div>
+</section>
+
+<section class="event-detail" id="event-reviews">
+  <div class="dashboard-panel">
+    <div class="eyebrow">EVENT FEEDBACK</div>
+    <h2>Ratings &amp; Reviews</h2>
+
+    {% if average_rating is not none %}
+      <p>
+        <strong>{{ "%.1f"|format(average_rating) }} / 5</strong>
+        <span aria-label="Average rating">
+          {% for star in range(1, 6) %}{{ '★' if star <= (average_rating|round(0, 'floor')|int) else '☆' }}{% endfor %}
+        </span>
+        · {{ reviews|length }} {{ 'review' if reviews|length == 1 else 'reviews' }}
+      </p>
+    {% else %}
+      <p class="muted">No ratings yet. Be the first to share your experience!</p>
+    {% endif %}
+
+    {% if can_review %}
+      <form method="post" action="{{ url_for('events.submit_review', event_id=event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <fieldset class="event-rating-fieldset">
+          <legend>Your rating</legend>
+          <div class="event-star-picker" role="radiogroup"
+               aria-label="Choose a rating from one to five stars">
+            {% for value in range(1, 6) %}
+              <label class="event-star-option"
+                     for="event-rating-{{ value }}"
+                     title="{{ value }} out of 5 stars">
+                <input id="event-rating-{{ value }}"
+                       type="radio" name="rating" value="{{ value }}"
+                       required>
+                <span aria-hidden="true">★</span>
+              </label>
+            {% endfor %}
+          </div>
+          <p class="event-rating-hint" id="event-rating-hint"
+             aria-live="polite">Select a star rating</p>
+        </fieldset>
+
+        <label for="review-feedback">Your feedback (optional)</label>
+        <textarea id="review-feedback" name="feedback" rows="4"
+                  maxlength="2000"
+                  placeholder="What did you think of the event?"></textarea>
+
+        <button class="button button-primary" type="submit">Submit review</button>
+      </form>
+    {% elif current_user.is_authenticated and current_user.role == 'student' and user_review %}
+      <p class="status-active">✓ You have reviewed this event.</p>
+    {% elif current_user.is_authenticated and current_user.role == 'student' and event.status != 'completed' %}
+      <p class="muted">Reviews open after the event is marked completed.</p>
+    {% elif current_user.is_authenticated and current_user.role == 'student' and not already_registered %}
+      <p class="muted">Only registered students can review this event.</p>
+    {% endif %}
+
+    {% if reviews %}
+      <div class="review-list">
+        {% for review in reviews %}
+          <article class="review-card event-review-card">
+            <div>
+              <strong aria-label="{{ review.rating }} out of 5 stars">
+                {% for star in range(1, 6) %}{{ '★' if star <= review.rating else '☆' }}{% endfor %}
+              </strong>
+              <p class="muted">Verified event participant</p>
+              {% if review.feedback %}
+                <p>{{ review.feedback }}</p>
+              {% else %}
+                <p class="muted">Rating submitted without written feedback.</p>
+              {% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+
+<script>
+(() => {
+  const picker = document.querySelector('.event-star-picker');
+  if (!picker || picker.dataset.initialized === 'true') return;
+  picker.dataset.initialized = 'true';
+
+  const options = [...picker.querySelectorAll('.event-star-option')];
+  const hint = document.getElementById('event-rating-hint');
+  const form = picker.closest('form');
+  const labels = {
+    1: 'Poor',
+    2: 'Fair',
+    3: 'Good',
+    4: 'Very good',
+    5: 'Excellent'
+  };
+
+  function paint(value) {
+    options.forEach(option => {
+      const input = option.querySelector('input');
+      const selected = Number(input.value) <= value;
+      option.classList.toggle('is-lit', selected);
+    });
+  }
+
+  function selectedValue() {
+    const checked = picker.querySelector('input:checked');
+    return checked ? Number(checked.value) : 0;
+  }
+
+  options.forEach(option => {
+    const input = option.querySelector('input');
+    option.addEventListener('mouseenter', () => paint(Number(input.value)));
+    option.addEventListener('focusin', () => paint(Number(input.value)));
+    input.addEventListener('change', () => {
+      const value = Number(input.value);
+      paint(value);
+      if (hint) hint.textContent = `${labels[value]} — ${value} out of 5 stars`;
+    });
+  });
+
+  picker.addEventListener('mouseleave', () => paint(selectedValue()));
+  picker.addEventListener('focusout', () => {
+    window.setTimeout(() => {
+      if (!picker.contains(document.activeElement)) paint(selectedValue());
+    }, 0);
+  });
+
+  if (form) {
+    form.addEventListener('reset', () => {
+      window.setTimeout(() => {
+        paint(0);
+        if (hint) hint.textContent = 'Select a star rating';
+      }, 0);
+    });
+  }
+})();
+</script>
+
+{% endblock %}

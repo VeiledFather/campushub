@@ -1,0 +1,14 @@
+Flask
+Flask-SQLAlchemy
+Flask-Login
+Flask-Migrate
+Flask-WTF
+python-dotenv
+psycopg[binary]
+email-validator
+qrcode[pil]
+reportlab
+APScheduler
+google-genai
+gunicorn
+pytest

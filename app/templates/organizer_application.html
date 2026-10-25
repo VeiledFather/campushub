@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <h2>Apply to Become an Event Organizer</h2>
+  <p>Submit your academic details and explain your event-organizing experience.</p>
+  <form method="POST">
+    <div class="mb-3">
+      <label class="form-label">CGPA (out of 10)</label>
+      <input class="form-control" type="number" name="cgpa" min="0" max="10" step="0.01" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Attendance (%)</label>
+      <input class="form-control" type="number" name="attendance" min="0" max="100" step="0.1" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Previous experience</label>
+      <textarea class="form-control" name="experience" rows="3"></textarea>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Why do you want to organize events?</label>
+      <textarea class="form-control" name="reason" rows="4" required></textarea>
+    </div>
+    <button class="btn btn-primary" type="submit">Submit Application</button>
+  </form>
+</div>
+{% endblock %}

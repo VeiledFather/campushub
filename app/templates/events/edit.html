@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CampusHub · Event Management</p>
+    <h1>Edit Event</h1>
+    <p>Update the event details and save your changes.</p>
+  </div>
+  <a class="button button-quiet" href="{{ url_for('events.detail', event_id=event.id) }}">Back to event</a>
+</section>
+
+<section class="panel">
+  <form method="post" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label for="title">Event title</label>
+    <input id="title" name="title" maxlength="200" required value="{{ event.title }}">
+
+    <label for="description">Description</label>
+    <textarea id="description" name="description" rows="5">{{ event.description or '' }}</textarea>
+
+    <label for="event_type">Event type</label>
+    <input id="event_type" name="event_type" maxlength="80" value="{{ event.event_type or 'general' }}" required>
+
+    <label for="venue_id">Venue</label>
+    <select id="venue_id" name="venue_id" required>
+      {% for venue in venues %}
+      <option value="{{ venue.id }}" {% if event.venue_id == venue.id %}selected{% endif %}>
+        {{ venue.name }} · Capacity {{ venue.capacity }}
+      </option>
+      {% endfor %}
+    </select>
+
+    <label for="start_time">Event starts (IST)</label>
+    <input id="start_time" type="datetime-local" name="start_time" required
+           value="{{ event.start_time.replace(tzinfo=none).strftime('%Y-%m-%dT%H:%M') if event.start_time else '' }}">
+
+    <label for="end_time">Event ends (IST)</label>
+    <input id="end_time" type="datetime-local" name="end_time" required
+           value="{{ event.end_time.replace(tzinfo=none).strftime('%Y-%m-%dT%H:%M') if event.end_time else '' }}">
+
+    <label for="registration_start">Registration opens (IST)</label>
+    <input id="registration_start" type="datetime-local" name="registration_start"
+           value="{{ event.registration_start.replace(tzinfo=none).strftime('%Y-%m-%dT%H:%M') if event.registration_start else '' }}">
+
+    <label for="registration_end">Registration closes (IST)</label>
+    <input id="registration_end" type="datetime-local" name="registration_end"
+           value="{{ event.registration_end.replace(tzinfo=none).strftime('%Y-%m-%dT%H:%M') if event.registration_end else '' }}">
+
+    <label for="max_participants">Participant limit (optional)</label>
+    <input id="max_participants" type="number" min="1" name="max_participants"
+           value="{{ event.max_participants if event.max_participants is not none else '' }}">
+
+    <label for="food_requirements">Food requirements</label>
+    <textarea id="food_requirements" name="food_requirements" rows="2">{{ event.food_requirements or '' }}</textarea>
+
+    <label for="equipment_requirements">Equipment requirements</label>
+    <textarea id="equipment_requirements" name="equipment_requirements" rows="2">{{ event.equipment_requirements or '' }}</textarea>
+
+    <div class="form-options">
+      <label>
+        <input type="checkbox" name="ticket_required" value="yes" {% if event.ticket_required %}checked{% endif %}>
+        Tickets required
+      </label>
+      <label>
+        <input type="checkbox" name="is_public" value="yes" {% if event.is_public %}checked{% endif %}>
+        Public event
+      </label>
+    </div>
+
+    <button class="button" type="submit">Save Event Changes</button>
+  </form>
+</section>
+{% endblock %}

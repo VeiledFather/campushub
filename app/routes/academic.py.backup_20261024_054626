@@ -1,0 +1,1222 @@
+from functools import wraps
+
+from flask import (
+    Blueprint, abort, current_app, flash, redirect, render_template,
+    request, url_for,
+)
+from flask_login import current_user, login_required
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
+
+from app.extensions import db
+from app.models import User, Student, Teacher, Department, Batch, Venue, Event, TeacherEventParticipation
+
+academic_bp = Blueprint("academic", __name__, url_prefix="/academic")
+
+ADMIN_ROLES = {"admin", "super_admin", "developer"}
+
+
+def admin_required(view):
+    @wraps(view)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if current_user.role not in ADMIN_ROLES:
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@academic_bp.get("/")
+@admin_required
+def index():
+    student_search = request.args.get("student_search", "").strip()
+    department_filter = request.args.get("department_id", type=int)
+    batch_filter = request.args.get("student_batch_id", type=int)
+    verification_filter = request.args.get("verification", "")
+    id_status_filter = request.args.get("id_status", "")
+
+    student_query = Student.query.join(User, Student.user_id == User.id)
+
+    if student_search:
+        pattern = f"%{student_search}%"
+        student_query = student_query.filter(or_(
+            User.full_name.ilike(pattern),
+            User.email.ilike(pattern),
+            Student.campus_id.ilike(pattern),
+            Student.college_id.ilike(pattern),
+        ))
+
+    if department_filter:
+        student_query = student_query.join(Batch, Student.batch_id == Batch.id)
+        student_query = student_query.filter(
+            Batch.department_id == department_filter
+        )
+
+    if batch_filter:
+        student_query = student_query.filter(
+            Student.batch_id == batch_filter
+        )
+
+    if verification_filter == "verified":
+        student_query = student_query.filter(Student.id_verified.is_(True))
+    elif verification_filter == "unverified":
+        student_query = student_query.filter(Student.id_verified.is_(False))
+
+    if id_status_filter == "active":
+        student_query = student_query.filter(Student.campus_id_active.is_(True))
+    elif id_status_filter == "inactive":
+        student_query = student_query.filter(Student.campus_id_active.is_(False))
+
+    return render_template(
+        "academic/index.html",
+        departments=Department.query.order_by(Department.name).all(),
+        batches=Batch.query.order_by(Batch.name).all(),
+        students=student_query.order_by(Student.id.desc()).all(),
+        student_search=student_search,
+        department_filter=department_filter,
+        batch_filter=batch_filter,
+        verification_filter=verification_filter,
+        id_status_filter=id_status_filter,
+        teachers=Teacher.query.order_by(Teacher.id.desc()).all(),
+        venues=Venue.query.order_by(Venue.name).all(),
+        student_users=User.query.filter_by(role="student").order_by(User.email).all(),
+        teacher_users=User.query.filter_by(role="teacher").order_by(User.email).all(),
+    )
+
+
+@academic_bp.post("/departments")
+@admin_required
+def create_department():
+    name = request.form.get("name", "").strip()
+    code = request.form.get("code", "").strip().upper()
+
+    if not name or len(name) > 160 or not code or len(code) > 30:
+        flash("Enter a valid department name and code.", "error")
+        return redirect(url_for("academic.index"))
+
+    if Department.query.filter_by(code=code).first():
+        flash("That department code already exists.", "error")
+        return redirect(url_for("academic.index"))
+
+    db.session.add(Department(name=name, code=code, is_active=True))
+    try:
+        db.session.commit()
+        flash("Department created.", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not create the department; check for duplicate values.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/batches")
+@admin_required
+def create_batch():
+    name = request.form.get("name", "").strip()
+    academic_year = request.form.get("academic_year", "").strip()
+    department_id = request.form.get("department_id", type=int)
+
+    if not name or len(name) > 100 or not academic_year or len(academic_year) > 30:
+        flash("Enter a valid batch name and academic year.", "error")
+        return redirect(url_for("academic.index"))
+
+    department = db.session.get(Department, department_id) if department_id else None
+    if department is None or not department.is_active:
+        flash("Choose an active department.", "error")
+        return redirect(url_for("academic.index"))
+
+    exists = Batch.query.filter_by(
+        name=name,
+        academic_year=academic_year,
+        department_id=department.id,
+    ).first()
+    if exists:
+        flash("That batch already exists for this department and year.", "error")
+        return redirect(url_for("academic.index"))
+
+    db.session.add(Batch(
+        name=name,
+        academic_year=academic_year,
+        department_id=department.id,
+        is_active=True,
+    ))
+    try:
+        db.session.commit()
+        flash("Batch created.", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not create the batch.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/batches/<int:batch_id>/edit")
+@admin_required
+def edit_batch(batch_id):
+    from datetime import date
+
+    batch = db.session.get(Batch, batch_id)
+    if batch is None:
+        abort(404)
+
+    name = request.form.get("name", "").strip()
+    academic_year = request.form.get("academic_year", "").strip()
+    department_id = request.form.get("department_id", type=int)
+    home_room = request.form.get("home_room", "").strip()
+
+    if (
+        not name or len(name) > 100
+        or not academic_year or len(academic_year) > 30
+        or len(home_room) > 100
+    ):
+        flash("Enter a valid batch name, academic year, and homeroom.", "error")
+        return redirect(url_for("academic.index"))
+
+    department = db.session.get(Department, department_id) if department_id else None
+    if department is None or not department.is_active:
+        flash("Choose an active department.", "error")
+        return redirect(url_for("academic.index"))
+
+    duplicate = Batch.query.filter(
+        Batch.name == name,
+        Batch.academic_year == academic_year,
+        Batch.department_id == department.id,
+        Batch.id != batch.id,
+    ).first()
+
+    if duplicate:
+        flash("That batch already exists for this department and year.", "error")
+        return redirect(url_for("academic.index"))
+
+    parsed_dates = {}
+    for field in ("start_date", "end_date", "id_expiry_date"):
+        raw_value = request.form.get(field, "").strip()
+        if raw_value:
+            try:
+                parsed_dates[field] = date.fromisoformat(raw_value)
+            except ValueError:
+                flash("Enter valid dates for the batch.", "error")
+                return redirect(url_for("academic.index"))
+        else:
+            parsed_dates[field] = None
+
+    start_date = parsed_dates["start_date"]
+    end_date = parsed_dates["end_date"]
+    if start_date and end_date and end_date < start_date:
+        flash("Batch end date cannot be earlier than its start date.", "error")
+        return redirect(url_for("academic.index"))
+
+    batch.name = name
+    batch.academic_year = academic_year
+    batch.department_id = department.id
+    batch.home_room = home_room or None
+    batch.start_date = start_date
+    batch.end_date = end_date
+    batch.id_expiry_date = parsed_dates["id_expiry_date"]
+
+    try:
+        db.session.commit()
+        flash("Batch updated. Existing student and teacher assignments were preserved.", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not update the batch.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/batches/<int:batch_id>/status")
+@admin_required
+def set_batch_status(batch_id):
+    batch = db.session.get(Batch, batch_id)
+    if batch is None:
+        abort(404)
+
+    action = request.form.get("action")
+    if action not in {"activate", "deactivate"}:
+        abort(400)
+
+    batch.is_active = action == "activate"
+    try:
+        db.session.commit()
+        flash(
+            "Batch activated." if batch.is_active else
+            "Batch deactivated. Existing assignments were preserved.",
+            "success",
+        )
+    except Exception:
+        db.session.rollback()
+        flash("Could not update batch status.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students")
+@admin_required
+def create_student_profile():
+    user_id = request.form.get("user_id", type=int)
+    campus_id = request.form.get("campus_id", "").strip()
+    college_id = request.form.get("college_id", "").strip()
+    batch_id = request.form.get("batch_id", type=int)
+
+    user = db.session.get(User, user_id) if user_id else None
+    batch = db.session.get(Batch, batch_id) if batch_id else None
+
+    if user is None or user.role != "student":
+        flash("Choose an account with the student role.", "error")
+        return redirect(url_for("academic.index"))
+
+    if Student.query.filter_by(user_id=user.id).first():
+        flash("This account already has a student profile.", "error")
+        return redirect(url_for("academic.index"))
+
+    if not campus_id or len(campus_id) > 80 or not college_id or len(college_id) > 80:
+        flash("Campus ID and college ID are required (maximum 80 characters each).", "error")
+        return redirect(url_for("academic.index"))
+
+    if batch_id and (batch is None or not batch.is_active):
+        flash("Choose an active batch.", "error")
+        return redirect(url_for("academic.index"))
+
+    db.session.add(Student(
+        user_id=user.id,
+        campus_id=campus_id,
+        college_id=college_id,
+        batch_id=batch.id if batch else None,
+        id_verified=False,
+        campus_id_active=True,
+    ))
+    try:
+        db.session.commit()
+        flash("Student profile created. Campus ID remains unverified until an administrator verifies it.", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not create the profile. Check for duplicate Campus IDs or college IDs.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students/import-csv")
+@admin_required
+def import_students_csv():
+    import csv
+    import io
+    import secrets
+    import string
+
+    from werkzeug.security import generate_password_hash
+
+    upload = request.files.get("csv_file")
+    batch_id = request.form.get("batch_id", type=int)
+
+    if not upload or not upload.filename:
+        flash("Choose a CSV file to import.", "error")
+        return redirect(url_for("academic.index"))
+
+    if not upload.filename.lower().endswith(".csv"):
+        flash("Upload a .csv file.", "error")
+        return redirect(url_for("academic.index"))
+
+    batch = db.session.get(Batch, batch_id) if batch_id else None
+    if batch_id and (batch is None or not batch.is_active):
+        flash("Choose an active batch, or leave batch assignment empty.", "error")
+        return redirect(url_for("academic.index"))
+
+    try:
+        raw = upload.stream.read(2_000_001)
+        if len(raw) > 2_000_000:
+            flash("CSV file is too large. Maximum size is 2 MB.", "error")
+            return redirect(url_for("academic.index"))
+
+        content = raw.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(content))
+        required = {"full_name", "email", "campus_id", "college_id"}
+
+        if not reader.fieldnames or not required.issubset(
+            {name.strip().lower() for name in reader.fieldnames if name}
+        ):
+            flash(
+                "CSV headers must include full_name,email,campus_id,college_id.",
+                "error",
+            )
+            return redirect(url_for("academic.index"))
+
+        # Normalize header names and ignore completely blank rows.
+        reader.fieldnames = [name.strip().lower() for name in reader.fieldnames]
+        rows = [
+            {str(k).strip().lower(): (v or "").strip()
+             for k, v in row.items() if k}
+            for row in reader
+        ]
+    except (UnicodeDecodeError, csv.Error):
+        flash("Could not read the CSV. Save it as UTF-8 CSV and try again.", "error")
+        return redirect(url_for("academic.index"))
+
+    rows = [row for row in rows if any(row.values())]
+    if not rows:
+        flash("The CSV contains no student rows.", "error")
+        return redirect(url_for("academic.index"))
+
+    if len(rows) > 1000:
+        flash("Import is limited to 1,000 rows per upload.", "error")
+        return redirect(url_for("academic.index"))
+
+    created_accounts = 0
+    created_profiles = 0
+    linked_existing = 0
+    skipped = 0
+    errors = []
+    new_accounts = []
+    seen_emails = set()
+    seen_campus_ids = set()
+    seen_college_ids = set()
+
+    alphabet = string.ascii_letters + string.digits + "!@#$%*-_"
+
+    try:
+        for line_number, row in enumerate(rows, start=2):
+            name = row.get("full_name", "").strip()
+            email = row.get("email", "").strip().lower()
+            campus_id = row.get("campus_id", "").strip()
+            college_id = row.get("college_id", "").strip()
+
+            if (
+                not name or len(name) > 160
+                or "@" not in email or len(email) > 255
+                or not campus_id or len(campus_id) > 80
+                or not college_id or len(college_id) > 80
+            ):
+                errors.append(f"Row {line_number}: invalid or missing required field.")
+                skipped += 1
+                continue
+
+            if email in seen_emails:
+                errors.append(f"Row {line_number}: duplicate email in this CSV.")
+                skipped += 1
+                continue
+            if campus_id in seen_campus_ids or Student.query.filter_by(
+                campus_id=campus_id
+            ).first():
+                errors.append(f"Row {line_number}: duplicate Campus ID.")
+                skipped += 1
+                continue
+            if college_id in seen_college_ids or Student.query.filter_by(
+                college_id=college_id
+            ).first():
+                errors.append(f"Row {line_number}: duplicate College ID.")
+                skipped += 1
+                continue
+
+            user = User.query.filter(
+                __import__("sqlalchemy").func.lower(User.email) == email
+            ).first()
+
+            if user and user.role != "student":
+                errors.append(
+                    f"Row {line_number}: email belongs to a non-student account."
+                )
+                skipped += 1
+                continue
+
+            if user and user.student:
+                errors.append(
+                    f"Row {line_number}: student profile already exists; skipped."
+                )
+                skipped += 1
+                continue
+
+            if user is None:
+                temporary_password = "".join(
+                    secrets.choice(alphabet) for _ in range(24)
+                )
+                user = User(
+                    full_name=name,
+                    email=email,
+                    password_hash=generate_password_hash(temporary_password),
+                    role="student",
+                    is_active=True,
+                    is_suspended=False,
+                )
+                db.session.add(user)
+                db.session.flush()
+                new_accounts.append(
+                    (user.id, user.password_hash, email, name)
+                )
+                created_accounts += 1
+            else:
+                # Link the existing student account without changing its password,
+                # name, login status, or suspension status.
+                linked_existing += 1
+
+            student = Student(
+                user_id=user.id,
+                campus_id=campus_id,
+                college_id=college_id,
+                batch_id=batch.id if batch else None,
+                id_verified=False,
+                campus_id_active=True,
+            )
+            db.session.add(student)
+            db.session.flush()
+
+            seen_emails.add(email)
+            seen_campus_ids.add(campus_id)
+            seen_college_ids.add(college_id)
+            created_profiles += 1
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Student CSV import failed")
+        flash(
+            "Import failed and its database changes were rolled back. "
+            "Please review the CSV and try again.",
+            "error",
+        )
+        return redirect(url_for("academic.index"))
+
+    import smtplib
+    from email.message import EmailMessage
+    from itsdangerous import URLSafeTimedSerializer
+
+    emails_sent = 0
+    emails_failed = 0
+
+    if new_accounts:
+        server_name = current_app.config.get("MAIL_SERVER", "")
+        mail_port = current_app.config.get("MAIL_PORT", 587)
+        mail_user = current_app.config.get("MAIL_USERNAME", "")
+        mail_password = current_app.config.get("MAIL_PASSWORD", "")
+        sender = current_app.config.get("MAIL_DEFAULT_SENDER") or mail_user
+
+        if not server_name or not sender:
+            emails_failed = len(new_accounts)
+            current_app.logger.warning(
+                "Student setup emails not sent: SMTP server or sender is not configured."
+            )
+        else:
+            serializer = URLSafeTimedSerializer(
+                current_app.config["SECRET_KEY"]
+            )
+            try:
+                if mail_port == 465:
+                    connection = smtplib.SMTP_SSL(
+                        server_name, mail_port, timeout=20
+                    )
+                else:
+                    connection = smtplib.SMTP(
+                        server_name, mail_port, timeout=20
+                    )
+                    connection.starttls()
+
+                with connection as smtp:
+                    if mail_user:
+                        smtp.login(mail_user, mail_password)
+
+                    for user_id, password_hash, email, name in new_accounts:
+                        token = serializer.dumps(
+                            {
+                                "user_id": user_id,
+                                "password_hash": password_hash,
+                            },
+                            salt="campushub-student-password-setup",
+                        )
+                        setup_url = url_for(
+                            "auth.password_setup",
+                            token=token,
+                            _external=True,
+                        )
+
+                        message = EmailMessage()
+                        message["Subject"] = "Set up your CampusHub student account"
+                        message["From"] = sender
+                        message["To"] = email
+                        message.set_content(
+                            f"Hello {name},\n\n"
+                            "A CampusHub student account has been created for you.\n"
+                            "Set your password using this secure link (valid for one hour):\n\n"
+                            f"{setup_url}\n\n"
+                            "If you weren't expecting this account, contact your campus administrator."
+                        )
+                        smtp.send_message(message)
+                        emails_sent += 1
+
+            except Exception:
+                emails_failed = len(new_accounts) - emails_sent
+                current_app.logger.exception(
+                    "One or more student password setup emails could not be sent."
+                )
+
+    summary = (
+        f"CSV import complete: {created_accounts} new accounts, "
+        f"{created_profiles} profiles created, {linked_existing} existing "
+        f"accounts linked, {skipped} rows skipped."
+    )
+    if new_accounts:
+        summary += (
+            f" Setup emails sent: {emails_sent}; email failures: {emails_failed}."
+        )
+    flash(summary, "success" if skipped == 0 else "warning")
+
+    for message in errors[:15]:
+        flash(message, "error")
+    if len(errors) > 15:
+        flash(f"{len(errors) - 15} additional row errors were omitted.", "warning")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students/bulk-enroll")
+@admin_required
+def bulk_enroll_students():
+    from sqlalchemy import select
+
+    raw_ids = request.form.getlist("student_ids")
+    action = request.form.get("enrollment_action", "assign").strip()
+    batch_id = request.form.get("batch_id", type=int)
+
+    try:
+        student_ids = list({int(value) for value in raw_ids})
+    except (TypeError, ValueError):
+        flash("Invalid student selection.", "error")
+        return redirect(url_for("academic.index"))
+
+    if not student_ids:
+        flash("Select at least one student.", "error")
+        return redirect(url_for("academic.index"))
+
+    students = Student.query.filter(Student.id.in_(student_ids)).all()
+    if len(students) != len(student_ids):
+        flash("Some selected student records could not be found.", "error")
+        return redirect(url_for("academic.index"))
+
+    if action == "unassign":
+        for student in students:
+            student.batch_id = None
+        message = f"Removed batch assignments for {len(students)} student(s)."
+    elif action == "assign":
+        batch = db.session.get(Batch, batch_id) if batch_id else None
+        if batch is None or not batch.is_active:
+            flash("Choose an active batch.", "error")
+            return redirect(url_for("academic.index"))
+
+        for student in students:
+            student.batch_id = batch.id
+        message = f"Assigned {len(students)} student(s) to {batch.name}."
+    else:
+        flash("Choose a valid enrollment action.", "error")
+        return redirect(url_for("academic.index"))
+
+    db.session.commit()
+    flash(message, "success")
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students/<int:student_id>/password-setup-link")
+@admin_required
+def resend_student_password_link(student_id):
+    import smtplib
+    from email.message import EmailMessage
+    from itsdangerous import URLSafeTimedSerializer
+
+    student = db.session.get(Student, student_id)
+    if student is None:
+        abort(404)
+
+    user = student.user
+    if user is None or user.role != "student":
+        flash("No student account is associated with this profile.", "error")
+        return redirect(url_for("academic.index"))
+
+    mail_server = current_app.config.get("MAIL_SERVER", "")
+    mail_port = current_app.config.get("MAIL_PORT", 587)
+    mail_username = current_app.config.get("MAIL_USERNAME", "")
+    mail_password = current_app.config.get("MAIL_PASSWORD", "")
+    sender = current_app.config.get("MAIL_DEFAULT_SENDER") or mail_username
+
+    if not mail_server or not sender:
+        flash("Email delivery is not configured. Check SMTP settings.", "error")
+        return redirect(url_for("academic.index"))
+
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
+    token = serializer.dumps(
+        {"user_id": user.id, "password_hash": user.password_hash},
+        salt="campushub-student-password-setup",
+    )
+    setup_url = url_for("auth.password_setup", token=token, _external=True)
+
+    message = EmailMessage()
+    message["Subject"] = "Your CampusHub password setup link"
+    message["From"] = sender
+    message["To"] = user.email
+    message.set_content(
+        f"Hello {user.full_name},\n\n"
+        "An administrator has requested a password setup/reset link for your "
+        "CampusHub student account.\n\n"
+        "Use this secure link within one hour:\n"
+        f"{setup_url}\n\n"
+        "If you did not expect this email, contact your campus administrator."
+    )
+
+    try:
+        if mail_port == 465:
+            connection = smtplib.SMTP_SSL(mail_server, mail_port, timeout=20)
+        else:
+            connection = smtplib.SMTP(mail_server, mail_port, timeout=20)
+            connection.starttls()
+
+        with connection as smtp:
+            if mail_username:
+                smtp.login(mail_username, mail_password)
+            smtp.send_message(message)
+
+        flash("Password setup/reset link emailed to the student's registered address.", "success")
+    except Exception:
+        current_app.logger.exception("Could not send student password setup email.")
+        flash("Email could not be sent. Check SMTP configuration and application logs.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students/<int:student_id>/account-status")
+@admin_required
+def set_student_account_status(student_id):
+    student = db.session.get(Student, student_id)
+    if student is None:
+        abort(404)
+
+    action = request.form.get("action", "").strip()
+    if action not in {"suspend", "reactivate"}:
+        flash("Invalid student account action.", "error")
+        return redirect(url_for("academic.index"))
+
+    if student.user.role != "student":
+        flash("Account controls are only available for student accounts.", "error")
+        return redirect(url_for("academic.index"))
+
+    student.user.is_active = action == "reactivate"
+    db.session.commit()
+
+    flash(
+        "Student account suspended. Their records and Campus ID were preserved."
+        if action == "suspend"
+        else "Student account reactivated.",
+        "success",
+    )
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students/<int:student_id>/edit")
+@admin_required
+def edit_student_profile(student_id):
+    student = db.session.get(Student, student_id)
+    if student is None:
+        abort(404)
+
+    campus_id = request.form.get("campus_id", "").strip()
+    college_id = request.form.get("college_id", "").strip()
+    batch_id = request.form.get("batch_id", type=int)
+
+    if (
+        not campus_id or len(campus_id) > 80
+        or not college_id or len(college_id) > 80
+    ):
+        flash("Campus ID and college ID are required (maximum 80 characters each).", "error")
+        return redirect(url_for("academic.index"))
+
+    duplicate_campus = Student.query.filter(
+        Student.campus_id == campus_id,
+        Student.id != student.id,
+    ).first()
+    duplicate_college = Student.query.filter(
+        Student.college_id == college_id,
+        Student.id != student.id,
+    ).first()
+
+    if duplicate_campus or duplicate_college:
+        flash("That Campus ID or college ID is already assigned to another student.", "error")
+        return redirect(url_for("academic.index"))
+
+    batch = db.session.get(Batch, batch_id) if batch_id else None
+    if batch_id and (batch is None or not batch.is_active):
+        flash("Choose an active batch, or select No batch.", "error")
+        return redirect(url_for("academic.index"))
+
+    student.campus_id = campus_id
+    student.college_id = college_id
+    student.batch_id = batch.id if batch else None
+
+    try:
+        db.session.commit()
+        flash(
+            "Student profile updated. Verification and Campus ID status were preserved.",
+            "success",
+        )
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not update the student profile; check for duplicate IDs.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students/<int:student_id>/verification")
+@admin_required
+def verify_student_id(student_id):
+    student = db.session.get(Student, student_id)
+    if student is None:
+        abort(404)
+
+    action = request.form.get("action")
+    if action not in {"verify", "unverify"}:
+        abort(400)
+
+    student.id_verified = action == "verify"
+    db.session.commit()
+    flash(
+        "Campus ID marked verified." if student.id_verified
+        else "Campus ID verification removed.",
+        "success",
+    )
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/students/<int:student_id>/campus-id-status")
+@admin_required
+def set_campus_id_status(student_id):
+    student = db.session.get(Student, student_id)
+    if student is None:
+        abort(404)
+
+    action = request.form.get("action")
+    if action not in {"activate", "deactivate"}:
+        abort(400)
+
+    student.campus_id_active = action == "activate"
+    db.session.commit()
+    flash(
+        "Campus ID activated." if student.campus_id_active
+        else "Campus ID deactivated.",
+        "success",
+    )
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/teachers")
+@admin_required
+def create_teacher_profile():
+    user_id = request.form.get("user_id", type=int)
+    faculty_id = request.form.get("faculty_id", "").strip()
+    official_email = request.form.get("official_email", "").strip().lower()
+    faculty_role = request.form.get("faculty_role", "").strip()
+    batch_id = request.form.get("batch_id", type=int)
+
+    user = db.session.get(User, user_id) if user_id else None
+    batch = db.session.get(Batch, batch_id) if batch_id else None
+
+    if user is None or user.role != "teacher":
+        flash("Choose an account with the teacher role.", "error")
+        return redirect(url_for("academic.index"))
+
+    if Teacher.query.filter_by(user_id=user.id).first():
+        flash("This account already has a teacher profile.", "error")
+        return redirect(url_for("academic.index"))
+
+    if not faculty_id or len(faculty_id) > 80 or not official_email or len(official_email) > 255:
+        flash("Faculty ID and official email are required.", "error")
+        return redirect(url_for("academic.index"))
+
+    if batch_id and (batch is None or not batch.is_active):
+        flash("Choose an active batch.", "error")
+        return redirect(url_for("academic.index"))
+
+    db.session.add(Teacher(
+        user_id=user.id,
+        faculty_id=faculty_id,
+        official_email=official_email,
+        faculty_role=faculty_role or None,
+        homeroom_batch_id=batch.id if batch else None,
+        id_verified=False,
+    ))
+    try:
+        db.session.commit()
+        flash("Teacher profile created. Faculty identity remains unverified.", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not create the teacher profile. Check for duplicate faculty ID or email.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/teachers/<int:teacher_id>/edit")
+@admin_required
+def edit_teacher_profile(teacher_id):
+    teacher = db.session.get(Teacher, teacher_id)
+    if teacher is None:
+        abort(404)
+
+    faculty_id = request.form.get("faculty_id", "").strip()
+    official_email = request.form.get("official_email", "").strip().lower()
+    faculty_role = request.form.get("faculty_role", "").strip()
+    batch_id = request.form.get("batch_id", type=int)
+
+    if (
+        not faculty_id
+        or len(faculty_id) > 80
+        or not official_email
+        or len(official_email) > 255
+        or "@" not in official_email
+    ):
+        flash("Enter a valid faculty ID and official email.", "error")
+        return redirect(url_for("academic.index"))
+
+    duplicate_id = Teacher.query.filter(
+        Teacher.faculty_id == faculty_id,
+        Teacher.id != teacher.id,
+    ).first()
+    duplicate_email = Teacher.query.filter(
+        Teacher.official_email == official_email,
+        Teacher.id != teacher.id,
+    ).first()
+
+    if duplicate_id or duplicate_email:
+        flash("That faculty ID or official email is already in use.", "error")
+        return redirect(url_for("academic.index"))
+
+    if len(faculty_role) > 100:
+        flash("Faculty role must be 100 characters or fewer.", "error")
+        return redirect(url_for("academic.index"))
+
+    batch = db.session.get(Batch, batch_id) if batch_id else None
+    if batch_id and (batch is None or not batch.is_active):
+        flash("Choose an active batch, or select None.", "error")
+        return redirect(url_for("academic.index"))
+
+    teacher.faculty_id = faculty_id
+    teacher.official_email = official_email
+    teacher.faculty_role = faculty_role or None
+    teacher.homeroom_batch_id = batch.id if batch else None
+
+    try:
+        db.session.commit()
+        flash(
+            "Teacher profile updated. Verification status was preserved.",
+            "success",
+        )
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not update the teacher profile; check duplicate values.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/teachers/<int:teacher_id>/verification")
+@admin_required
+def verify_teacher_id(teacher_id):
+    teacher = db.session.get(Teacher, teacher_id)
+    if teacher is None:
+        abort(404)
+
+    action = request.form.get("action")
+    if action not in {"verify", "unverify"}:
+        abort(400)
+
+    teacher.id_verified = action == "verify"
+    db.session.commit()
+    flash(
+        "Faculty identity marked verified." if teacher.id_verified
+        else "Faculty identity verification removed.",
+        "success",
+    )
+    return redirect(url_for("academic.index"))
+
+
+@academic_bp.post("/venues")
+@admin_required
+def create_venue():
+    name = request.form.get("name", "").strip()
+    location = request.form.get("location", "").strip()
+    capacity = request.form.get("capacity", type=int)
+
+    if not name or len(name) > 160 or not capacity or capacity < 1:
+        flash("Enter a venue name and a positive capacity.", "error")
+        return redirect(url_for("academic.index"))
+
+    if Venue.query.filter_by(name=name).first():
+        flash("A venue with that name already exists.", "error")
+        return redirect(url_for("academic.index"))
+
+    db.session.add(Venue(
+        name=name,
+        location=location[:255] or None,
+        capacity=capacity,
+        is_active=True,
+        is_event_venue=True,
+    ))
+    try:
+        db.session.commit()
+        flash("Venue created.", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not create the venue.", "error")
+
+    return redirect(url_for("academic.index"))
+
+
+
+def _send_teacher_enrolled_student_setup_email(user):
+    """Send a student the same signed, one-hour setup link used by admins."""
+    import smtplib
+    from email.message import EmailMessage
+    from itsdangerous import URLSafeTimedSerializer
+
+    mail_server = current_app.config.get("MAIL_SERVER", "")
+    mail_port = int(current_app.config.get("MAIL_PORT", 587))
+    mail_username = current_app.config.get("MAIL_USERNAME", "")
+    mail_password = current_app.config.get("MAIL_PASSWORD", "")
+    sender = current_app.config.get("MAIL_DEFAULT_SENDER") or mail_username
+
+    if not mail_server or not sender:
+        current_app.logger.warning(
+            "Teacher enrollment setup email skipped: SMTP is not configured."
+        )
+        return False
+
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
+    token = serializer.dumps(
+        {"user_id": user.id, "password_hash": user.password_hash},
+        salt="campushub-student-password-setup",
+    )
+    setup_url = url_for("auth.password_setup", token=token, _external=True)
+
+    message = EmailMessage()
+    message["Subject"] = "Set up your CampusHub student account"
+    message["From"] = sender
+    message["To"] = user.email
+    message.set_content(
+        f"Hello {user.full_name},\n\n"
+        "Your CampusHub student account has been created.\n"
+        "Use the link below within one hour to create your password:\n\n"
+        f"{setup_url}\n\n"
+        "Your Campus ID is not verified automatically by account setup. "
+        "Contact your campus administrator if you need help."
+    )
+
+    try:
+        if mail_port == 465:
+            connection = smtplib.SMTP_SSL(
+                mail_server, mail_port, timeout=20
+            )
+        else:
+            connection = smtplib.SMTP(
+                mail_server, mail_port, timeout=20
+            )
+            connection.starttls()
+
+        with connection as smtp:
+            if mail_username:
+                smtp.login(mail_username, mail_password)
+            smtp.send_message(message)
+
+        return True
+    except Exception:
+        current_app.logger.exception(
+            "Could not send password setup email after teacher enrollment."
+        )
+        return False
+
+
+@academic_bp.route("/teacher", methods=["GET", "POST"])
+@login_required
+def teacher_workspace():
+    """Teacher workspace limited to the teacher's assigned homeroom batch."""
+    import secrets
+    from werkzeug.security import generate_password_hash
+
+    if current_user.role != "teacher":
+        abort(403)
+
+    teacher = Teacher.query.filter_by(user_id=current_user.id).first()
+    if teacher is None or teacher.homeroom_batch is None:
+        return render_template(
+            "academic/teacher.html",
+            teacher=teacher,
+            batch=None,
+            students=[],
+            error_message=(
+                "Your teacher profile needs an assigned homeroom batch. "
+                "Contact an administrator before enrolling students."
+            ),
+        ), 200
+
+    batch = teacher.homeroom_batch
+
+    # Faculty identity must be verified before accessing student records
+    # or performing enrollment actions.
+    if not teacher.id_verified:
+        return render_template(
+            "academic/teacher.html",
+            teacher=teacher,
+            batch=None,
+            students=[],
+            error_message=(
+                "Your faculty identity has not been verified yet. "
+                "Contact an administrator to complete verification."
+            ),
+        ), 403
+
+    if request.method == "POST":
+        if not batch.is_active:
+            abort(403)
+
+        full_name = request.form.get("full_name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        campus_id = request.form.get("campus_id", "").strip()
+        college_id = request.form.get("college_id", "").strip()
+
+        if not full_name or len(full_name) > 160:
+            flash("Enter a valid student name.", "error")
+        elif not email or len(email) > 255 or "@" not in email:
+            flash("Enter a valid student email address.", "error")
+        elif not campus_id or len(campus_id) > 80:
+            flash("Enter a valid Campus ID.", "error")
+        elif not college_id or len(college_id) > 80:
+            flash("Enter a valid College ID.", "error")
+        elif User.query.filter(__import__("sqlalchemy").func.lower(User.email) == email).first():
+            flash("An account with that email already exists.", "error")
+        elif Student.query.filter(
+            __import__("sqlalchemy").or_(
+                Student.campus_id == campus_id,
+                Student.college_id == college_id,
+            )
+        ).first():
+            flash("That Campus ID or College ID is already assigned.", "error")
+        else:
+            # One transaction creates the account and its student profile.
+            user = User(
+                full_name=full_name,
+                email=email,
+                password_hash=generate_password_hash(secrets.token_urlsafe(32)),
+                role="student",
+                is_active=True,
+                is_suspended=False,
+            )
+            db.session.add(user)
+            try:
+                db.session.flush()
+                student = Student(
+                    user_id=user.id,
+                    campus_id=campus_id,
+                    college_id=college_id,
+                    batch_id=batch.id,
+                    id_verified=False,
+                    campus_id_active=True,
+                )
+                db.session.add(student)
+                db.session.commit()
+
+                if _send_teacher_enrolled_student_setup_email(user):
+                    flash(
+                        "Student enrolled successfully. A one-hour password "
+                        "setup link was emailed to the student. Campus ID "
+                        "verification remains pending.",
+                        "success",
+                    )
+                else:
+                    flash(
+                        "Student enrolled successfully, but the password setup "
+                        "email could not be sent. Check SMTP configuration and "
+                        "application logs, then use the admin resend-link action. "
+                        "Campus ID verification remains pending.",
+                        "warning",
+                    )
+                return redirect(url_for("academic.teacher_workspace"))
+            except IntegrityError:
+                db.session.rollback()
+                flash(
+                    "Enrollment could not be completed because a record may "
+                    "already exist. Check the email and ID values.",
+                    "error",
+                )
+
+    students = (
+        Student.query.filter_by(batch_id=batch.id)
+        .order_by(Student.id.desc())
+        .all()
+    )
+    return render_template(
+        "academic/teacher.html",
+        teacher=teacher,
+        batch=batch,
+        students=students,
+        error_message=None,
+    )
+
+
+@academic_bp.route("/teacher/events", methods=["GET", "POST"])
+@login_required
+def teacher_event_participation():
+    """Allow verified teachers to register for published campus events."""
+    if current_user.role != "teacher":
+        abort(403)
+
+    teacher = Teacher.query.filter_by(user_id=current_user.id).first()
+    if teacher is None or not teacher.id_verified:
+        abort(403)
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+        event_id = request.form.get("event_id", type=int)
+
+        if action not in {"register", "withdraw"} or not event_id:
+            abort(400)
+
+        event = db.session.get(Event, event_id)
+        if event is None or event.status not in {"published", "ongoing"}:
+            flash("That event is not currently open for participation.", "error")
+            return redirect(url_for("academic.teacher_event_participation"))
+
+        record = TeacherEventParticipation.query.filter_by(
+            event_id=event.id, teacher_id=teacher.id
+        ).first()
+
+        if action == "register":
+            if record is None:
+                record = TeacherEventParticipation(
+                    event_id=event.id, teacher_id=teacher.id,
+                    status="registered",
+                )
+                db.session.add(record)
+            else:
+                record.status = "registered"
+
+            try:
+                db.session.commit()
+                flash("You are registered for the event.", "success")
+            except IntegrityError:
+                db.session.rollback()
+                flash("Registration could not be saved. Please try again.", "error")
+        else:
+            if record is not None and record.status == "registered":
+                record.status = "withdrawn"
+                db.session.commit()
+                flash("You have withdrawn from the event.", "success")
+            else:
+                flash("You have no active registration for this event.", "warning")
+
+        return redirect(url_for("academic.teacher_event_participation"))
+
+    events = (
+        Event.query
+        .filter(Event.status.in_(["published", "ongoing"]))
+        .order_by(Event.start_time.asc())
+        .all()
+    )
+    records = TeacherEventParticipation.query.filter_by(
+        teacher_id=teacher.id
+    ).all()
+
+    return render_template(
+        "academic/teacher_events.html",
+        teacher=teacher,
+        events=events,
+        participation_by_event={r.event_id: r.status for r in records},
+    )

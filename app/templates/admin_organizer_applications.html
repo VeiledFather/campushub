@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+{% if current_user.is_authenticated and current_user.role in ['admin', 'super_admin', 'developer'] %}
+<div class="container py-2">
+  <a class="btn btn-primary" href="{{ url_for('organizer_applications.admin_list') }}">Review Organizer Applications</a>
+</div>
+{% endif %}
+
+<div class="container py-4">
+  <h2>Organizer Applications</h2>
+  {% if applications %}
+    {% for item in applications %}
+      <section class="card mb-3 p-3">
+        <h5>Application #{{ item.id }}</h5>
+        <p><strong>User ID:</strong> {{ item.user_id }}</p>
+        <p><strong>CGPA:</strong> {{ item.cgpa }} / 10</p>
+        <p><strong>Attendance:</strong> {{ item.attendance }}%</p>
+        <p><strong>Experience:</strong> {{ item.experience or 'Not provided' }}</p>
+        <p><strong>Reason:</strong> {{ item.reason }}</p>
+        <p><strong>Status:</strong> {{ item.status }}</p>
+        {% if item.status == 'pending' %}
+          <form method="POST" action="{{ url_for('organizer_applications.review', application_id=item.id) }}">
+            <label class="form-label">Admin notes</label>
+            <textarea class="form-control mb-2" name="admin_notes" rows="2"></textarea>
+            <button class="btn btn-success" name="decision" value="approved">Approve</button>
+            <button class="btn btn-danger" name="decision" value="rejected">Reject</button>
+          </form>
+        {% endif %}
+      </section>
+    {% endfor %}
+  {% else %}
+    <p>No organizer applications yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

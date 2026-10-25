@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Teacher Academic Management · CampusHub{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <h1>Teacher Event Participation</h1>
+  <p>Browse campus events and manage your registrations.</p>
+  <p><a href="{{ url_for('academic.teacher_workspace') }}">Back to Academic Workspace</a></p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-info" role="alert">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  {% if not events %}
+    <p>No published or ongoing events are available right now.</p>
+  {% endif %}
+
+  {% for event in events %}
+    {% set participation = participation_by_event.get(event.id) %}
+    <article class="card mb-3">
+      <div class="card-body">
+        <h2 class="h5">{{ event.title }}</h2>
+        <p>{{ event.description or 'No description provided.' }}</p>
+        <p>
+          <strong>Starts:</strong> {{ event.start_time.strftime('%d %b %Y, %I:%M %p') }}<br>
+          <strong>Ends:</strong> {{ event.end_time.strftime('%d %b %Y, %I:%M %p') }}
+        </p>
+        {% if participation == 'registered' %}
+          <p class="text-success">You are registered.</p>
+          <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="event_id" value="{{ event.id }}">
+            <input type="hidden" name="action" value="withdraw">
+            <button class="btn btn-outline-danger" type="submit">Withdraw</button>
+          </form>
+        {% else %}
+          {% if participation == 'withdrawn' %}
+            <p>Previously registered; withdrawn.</p>
+          {% endif %}
+          {% if event.status == 'published' %}
+            <form method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="event_id" value="{{ event.id }}">
+              <input type="hidden" name="action" value="register">
+              <button class="btn btn-primary" type="submit">Register to Participate</button>
+            </form>
+          {% else %}
+            <p class="text-muted">Registration is closed for this event.</p>
+          {% endif %}
+        {% endif %}
+      </div>
+    </article>
+  {% endfor %}
+</div>
+{% endblock %}

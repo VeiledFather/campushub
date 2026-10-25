@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Notifications · CampusHub{% endblock %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CampusHub · Updates</p>
+    <h1>Notifications</h1>
+    <p>You have {{ unread_count }} unread notification{{ '' if unread_count == 1 else 's' }}.</p>
+  </div>
+  <a class="button button-quiet" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+</section>
+
+<section class="panel">
+  {% if notifications %}
+    <div class="notification-list">
+      {% for notification in notifications %}
+        <article class="dashboard-panel" style="margin-bottom: 1rem; {% if not notification.is_read %}border-left: 4px solid var(--accent, #8b7cf6);{% endif %}">
+          <div class="section-heading">
+            <h2>{{ notification.title }}</h2>
+            {% if not notification.is_read %}
+              <span class="status-badge">Unread</span>
+            {% else %}
+              <span class="muted">Read</span>
+            {% endif %}
+          </div>
+
+          <p>{{ notification.message }}</p>
+
+          <small class="muted">
+            {{ notification.created_at.strftime('%d %b %Y, %I:%M %p') if notification.created_at else '' }}
+          </small>
+
+          <form method="post"
+                action="{{ url_for('events.mark_notification_read', notification_id=notification.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button button-quiet" type="submit">
+              {% if notification.related_event and notification.related_event.is_public and notification.related_event.status == 'published' %}
+                Open event
+              {% elif not notification.is_read %}
+                Mark as read
+              {% else %}
+                Back to notifications
+              {% endif %}
+            </button>
+          </form>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <h2>You're all caught up!</h2>
+      <p>New event updates and announcements will appear here.</p>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

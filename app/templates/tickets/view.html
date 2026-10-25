@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Your Event Ticket | CampusHub{% endblock %}
+{% block content %}
+<section class="form-card">
+  <p class="eyebrow">CAMPUSHUB · EVENT TICKET</p>
+  <h1>{{ event.title }}</h1>
+  <p><strong>Ticket code:</strong> {{ ticket.ticket_code }}</p>
+  <p><strong>Status:</strong> {{ ticket.status|replace('_', ' ')|title }}</p>
+  <div style="max-width:300px;margin:1.5rem auto;text-align:center">
+    <div class="qr-code-white-panel" style="display:inline-flex;align-items:center;justify-content:center;background:#fff;padding:16px;border-radius:12px;border:1px solid #e5e7eb;box-shadow:0 4px 18px rgba(0,0,0,.18);"><img
+      src="data:image/svg+xml;base64,{{ qr_svg_b64 }}"
+      alt="QR code for ticket {{ ticket.ticket_code }}"
+      style="width:100%;height:auto"
+    ></div>
+  </div>
+  <p>Show this QR code to authorized event staff at check-in.</p>
+  {% if ticket.checked_in_at %}
+  <p>Checked in at: {{ ticket.checked_in_at }}</p>
+  {% endif %}
+  <p><a href="{{ url_for('events.detail', event_id=event.id) }}">Back to event</a></p>
+</section>
+{% endblock %}

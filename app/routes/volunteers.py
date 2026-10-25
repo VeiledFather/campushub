@@ -1,0 +1,184 @@
+from functools import wraps
+
+from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+
+from app.extensions import db
+from app.models import Event, Notification, Student, VolunteerApplication
+
+volunteers_bp = Blueprint(
+    "volunteers",
+    __name__,
+    url_prefix="/volunteers",
+)
+
+ADMIN_ROLES = {"admin", "super_admin", "developer"}
+REVIEW_ROLES = ADMIN_ROLES | {"organizer", "teacher"}
+
+
+def roles_required(*roles):
+    def decorator(view):
+        @wraps(view)
+        @login_required
+        def wrapped(*args, **kwargs):
+            if current_user.role not in roles:
+                abort(403)
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def can_review(application):
+    if current_user.role in ADMIN_ROLES:
+        return True
+
+    if current_user.role not in REVIEW_ROLES:
+        return False
+
+    return application.event.host_user_id == current_user.id
+
+
+@volunteers_bp.get("/my")
+@login_required
+def mine():
+    applications = (
+        VolunteerApplication.query
+        .filter_by(user_id=current_user.id)
+        .order_by(VolunteerApplication.created_at.desc())
+        .all()
+    )
+    return render_template(
+        "volunteers/mine.html",
+        applications=applications,
+    )
+
+
+@volunteers_bp.get("/assignments")
+@roles_required("student")
+def assignments():
+    approved_applications = (
+        VolunteerApplication.query
+        .filter_by(user_id=current_user.id, status="approved")
+        .order_by(VolunteerApplication.created_at.desc())
+        .all()
+    )
+    return render_template(
+        "volunteers/assignments.html",
+        applications=approved_applications,
+    )
+
+
+@volunteers_bp.route("/events/<int:event_id>/apply", methods=["GET", "POST"])
+@roles_required("student")
+def apply(event_id):
+    event = db.session.get(Event, event_id)
+
+    if event is None:
+        abort(404)
+
+    if event.status != "published" or not event.is_public:
+        abort(404)
+
+    student = Student.query.filter_by(user_id=current_user.id).first()
+    if student is None or not student.campus_id_active:
+        flash("An active campus ID is required to apply.", "error")
+        return redirect(url_for("events.detail", event_id=event.id))
+
+    existing = VolunteerApplication.query.filter_by(
+        event_id=event.id,
+        user_id=current_user.id,
+    ).first()
+
+    if existing:
+        flash("You have already applied to volunteer for this event.", "info")
+        return redirect(url_for("volunteers.mine"))
+
+    if request.method == "POST":
+        message = request.form.get("message", "").strip()
+        if len(message) > 2000:
+            flash("Your message must be 2,000 characters or fewer.", "error")
+            return redirect(
+                url_for("volunteers.apply", event_id=event.id)
+            )
+
+        application = VolunteerApplication(
+            user_id=current_user.id,
+            event_id=event.id,
+            message=message or None,
+            status="pending",
+        )
+        db.session.add(application)
+        db.session.commit()
+        flash("Your volunteer application has been submitted.", "success")
+        return redirect(url_for("volunteers.mine"))
+
+    return render_template("volunteers/apply.html", event=event)
+
+
+@volunteers_bp.get("/review")
+@roles_required(*REVIEW_ROLES)
+def review():
+    applications = (
+        VolunteerApplication.query
+        .join(Event, VolunteerApplication.event_id == Event.id)
+        .order_by(VolunteerApplication.created_at.desc())
+        .all()
+    )
+
+    if current_user.role not in ADMIN_ROLES:
+        applications = [
+            application for application in applications
+            if can_review(application)
+        ]
+
+    return render_template(
+        "volunteers/review.html",
+        applications=applications,
+    )
+
+
+@volunteers_bp.post("/<int:application_id>/decision")
+@roles_required(*REVIEW_ROLES)
+def decision(application_id):
+    application = db.session.get(VolunteerApplication, application_id)
+
+    if application is None:
+        abort(404)
+
+    if not can_review(application):
+        abort(403)
+
+    if application.status != "pending":
+        flash("This application has already been reviewed.", "info")
+        return redirect(url_for("volunteers.review"))
+
+    from flask import request
+    action = request.form.get("action", "").strip().lower()
+
+    if action not in {"approve", "reject"}:
+        abort(400)
+
+    application.status = (
+        "approved" if action == "approve" else "rejected"
+    )
+
+    decision_title = (
+        "Volunteer application approved"
+        if application.status == "approved"
+        else "Volunteer application rejected"
+    )
+    notification = Notification(
+        recipient_id=application.user_id,
+        notification_type=f"volunteer_{application.status}",
+        title=decision_title,
+        message=(
+            f'Your application to volunteer for "{application.event.title}" '
+            f'has been {application.status}.'
+        ),
+        related_event_id=application.event_id,
+    )
+    db.session.add(notification)
+    db.session.commit()
+
+    flash(f"Volunteer application {application.status}.", "success")
+    return redirect(url_for("volunteers.review"))

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}ID Verification Queue · CampusHub{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">CAMPUSHUB · FACULTY WORKSPACE</p>
+    <h1>Student ID Verification</h1>
+    <p class="muted">Review requests for your assigned homeroom: {{ batch.name }}.</p>
+  </div>
+</section>
+
+<section class="stats-grid">
+  <article class="stat-card"><span>Pending requests</span><strong>{{ pending_requests|length }}</strong></article>
+  <article class="stat-card"><span>Recent decisions</span><strong>{{ recent_reviews|length }}</strong></article>
+</section>
+
+<section class="card">
+  <h2>Pending review</h2>
+  {% if pending_requests %}
+    {% for item in pending_requests %}
+      <article class="card mb-4">
+        <h3>{{ item.student.user.full_name }}</h3>
+        <p><strong>Email:</strong> {{ item.student.user.email }}</p>
+        <p><strong>Campus ID on record:</strong> {{ item.student.campus_id }}</p>
+        <p><strong>College ID on record:</strong> {{ item.student.college_id }}</p>
+        <p><strong>Scanned value:</strong> {{ item.scanned_id }}</p>
+        <p><strong>Submitted:</strong> {{ item.created_at.strftime("%d %b %Y, %I:%M %p") }}</p>
+        <p><strong>Card photo:</strong></p>
+        <a href="{{ url_for('academic.teacher_id_verification_image', request_id=item.id) }}" target="_blank" rel="noopener">
+          <img src="{{ url_for('academic.teacher_id_verification_image', request_id=item.id) }}"
+               alt="Submitted student ID card"
+               style="max-width:100%;max-height:360px;object-fit:contain;">
+        </a>
+        <p class="muted">Compare the physical card details with the student's recorded IDs before approving.</p>
+        <div class="d-flex flex-wrap gap-2">
+          <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="request_id" value="{{ item.id }}">
+            <input type="hidden" name="action" value="approve">
+            <button class="btn btn-success" type="submit"
+                    onclick="return confirm('Approve this ID verification?');">Approve ID</button>
+          </form>
+          <form method="post" class="form-stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="request_id" value="{{ item.id }}">
+            <input type="hidden" name="action" value="reject">
+            <label for="reason-{{ item.id }}">Reason for rejection</label>
+            <textarea class="form-control" id="reason-{{ item.id }}" name="reason"
+                      minlength="3" maxlength="500" required
+                      placeholder="Explain what needs to be corrected"></textarea>
+            <button class="btn btn-outline-danger" type="submit"
+                    onclick="return confirm('Reject this ID verification?');">Reject ID</button>
+          </form>
+        </div>
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No pending ID verification requests for your homeroom.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Recent decisions</h2>
+  {% if recent_reviews %}
+    {% for item in recent_reviews %}
+      <article class="card mb-3">
+        <p><strong>{{ item.student.user.full_name }}</strong> · {{ item.status|title }}</p>
+        <p>Submitted ID: {{ item.scanned_id }}</p>
+        {% if item.review_reason %}<p>Reason: {{ item.review_reason }}</p>{% endif %}
+        {% if item.reviewed_at %}<p class="muted">{{ item.reviewed_at.strftime("%d %b %Y, %I:%M %p") }}</p>{% endif %}
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No reviewed requests yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

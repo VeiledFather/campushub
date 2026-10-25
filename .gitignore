@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local database and runtime files
+instance/
+logs/
+uploads/*
+!uploads/.gitkeep
+
+# Local backups
+.backups/
+backups/
+backup_signup_*/
+*.bak
+*.bak_*
+
+# OS/editor files
+.DS_Store
+.vscode/

@@ -1,0 +1,259 @@
+import pytest
+from itsdangerous import URLSafeTimedSerializer
+from werkzeug.security import generate_password_hash
+
+from app import create_app
+from app.extensions import db
+from app.models import User, Student
+
+
+@pytest.fixture()
+def app():
+    application = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-only-secret-key",
+        "SQLALCHEMY_DATABASE_URI": "sqlite://",
+        "SQLALCHEMY_TRACK_MODIFICATIONS": False,
+        "WTF_CSRF_ENABLED": False,
+        "SERVER_NAME": "localhost",
+    })
+
+    with application.app_context():
+        db.create_all()
+        yield application
+        db.session.remove()
+        db.drop_all()
+
+
+@pytest.fixture()
+def client(app):
+    return app.test_client()
+
+
+def create_student(app, *, active=True, suspended=False):
+    with app.app_context():
+        user = User(
+            full_name="Test Student",
+            email=f"student-{int(active)}-{int(suspended)}@example.test",
+            password_hash=generate_password_hash("initial-placeholder-password"),
+            role="student",
+            is_active=active,
+            is_suspended=suspended,
+        )
+        db.session.add(user)
+        db.session.flush()
+
+        student = Student(
+            user_id=user.id,
+            campus_id=f"CAMPUS-{user.id}",
+            college_id=f"COLLEGE-{user.id}",
+            id_verified=False,
+            campus_id_active=True,
+        )
+        db.session.add(student)
+        db.session.commit()
+        return user.id, user.password_hash
+
+
+def make_token(app, user_id, password_hash, *, age_seconds=None):
+    with app.app_context():
+        serializer = URLSafeTimedSerializer(app.config["SECRET_KEY"])
+        token = serializer.dumps(
+            {"user_id": user_id, "password_hash": password_hash},
+            salt="campushub-student-password-setup",
+        )
+
+        # For expiry testing, the test can use a serializer timestamp
+        # directly in the dedicated expired-token test below.
+        return token
+
+
+def test_valid_setup_link_opens_setup_page(client, app):
+    user_id, password_hash = create_student(app)
+    token = make_token(app, user_id, password_hash)
+
+    response = client.get(f"/auth/password-setup/{token}")
+
+    assert response.status_code == 200
+
+
+def test_tampered_setup_link_is_rejected(client, app):
+    user_id, password_hash = create_student(app)
+    token = make_token(app, user_id, password_hash)
+    tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
+
+    response = client.get(f"/auth/password-setup/{tampered}")
+
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+
+@pytest.mark.parametrize(
+    ("active", "suspended"),
+    [(False, False), (True, True)],
+)
+def test_inactive_or_suspended_student_cannot_use_setup_link(
+    client, app, active, suspended
+):
+    user_id, password_hash = create_student(
+        app, active=active, suspended=suspended
+    )
+    token = make_token(app, user_id, password_hash)
+
+    response = client.get(f"/auth/password-setup/{token}")
+
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+
+def test_setup_link_rejected_if_password_hash_has_changed(client, app):
+    user_id, old_hash = create_student(app)
+    token = make_token(app, user_id, old_hash)
+
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        user.set_password("a-different-password")
+        db.session.commit()
+
+    response = client.get(f"/auth/password-setup/{token}")
+
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+
+def test_teacher_role_cannot_use_student_setup_link(client, app):
+    with app.app_context():
+        user = User(
+            full_name="Test Teacher",
+            email="teacher@example.test",
+            password_hash=generate_password_hash("initial-placeholder-password"),
+            role="teacher",
+            is_active=True,
+            is_suspended=False,
+        )
+        db.session.add(user)
+        db.session.commit()
+        user_id = user.id
+        password_hash = user.password_hash
+
+    token = make_token(app, user_id, password_hash)
+    response = client.get(f"/auth/password-setup/{token}")
+
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+
+def test_student_without_profile_cannot_use_setup_link(client, app):
+    with app.app_context():
+        user = User(
+            full_name="Profile Missing",
+            email="no-profile@example.test",
+            password_hash=generate_password_hash("initial-placeholder-password"),
+            role="student",
+            is_active=True,
+            is_suspended=False,
+        )
+        db.session.add(user)
+        db.session.commit()
+        user_id = user.id
+        password_hash = user.password_hash
+
+    token = make_token(app, user_id, password_hash)
+    response = client.get(f"/auth/password-setup/{token}")
+
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+
+def test_expired_setup_link_is_rejected(client, app):
+    from itsdangerous import URLSafeTimedSerializer
+    from unittest.mock import patch
+
+    user_id, password_hash = create_student(app)
+
+    with app.app_context():
+        serializer = URLSafeTimedSerializer(app.config["SECRET_KEY"])
+        token = serializer.dumps(
+            {"user_id": user_id, "password_hash": password_hash},
+            salt="campushub-student-password-setup",
+        )
+
+    # Simulate a token issued long ago while exercising the real route.
+    with patch(
+        "itsdangerous.timed.TimestampSigner.get_timestamp",
+        return_value=1,
+    ):
+        with app.app_context():
+            expired_token = serializer.dumps(
+                {"user_id": user_id, "password_hash": password_hash},
+                salt="campushub-student-password-setup",
+            )
+
+    response = client.get(f"/auth/password-setup/{expired_token}")
+
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+def test_short_password_is_rejected(client, app):
+    user_id, password_hash = create_student(app)
+    token = make_token(app, user_id, password_hash)
+
+    response = client.post(
+        f"/auth/password-setup/{token}",
+        data={"password": "short", "confirm_password": "short"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"at least 12 characters" in response.data
+
+
+def test_mismatched_passwords_are_rejected(client, app):
+    user_id, password_hash = create_student(app)
+    token = make_token(app, user_id, password_hash)
+
+    response = client.post(
+        f"/auth/password-setup/{token}",
+        data={
+            "password": "StrongPassword123!",
+            "confirm_password": "DifferentPassword123!",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"passwords do not match" in response.data
+
+
+def test_successful_password_setup_and_link_reuse_rejected(client, app):
+    user_id, password_hash = create_student(app)
+    token = make_token(app, user_id, password_hash)
+    new_password = "StrongCampusPassword123!"
+
+    response = client.post(
+        f"/auth/password-setup/{token}",
+        data={
+            "password": new_password,
+            "confirm_password": new_password,
+        },
+    )
+
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        assert user is not None
+        assert user.check_password(new_password) if hasattr(user, "check_password") else user.password_hash != password_hash
+
+    reused = client.get(f"/auth/password-setup/{token}")
+    assert reused.status_code == 302
+    assert "/auth/login" in reused.headers["Location"]
+
+    login_response = client.post(
+        "/auth/login",
+        data={"email": "student-1-0@example.test", "password": new_password},
+        follow_redirects=False,
+    )
+    assert login_response.status_code == 302
+

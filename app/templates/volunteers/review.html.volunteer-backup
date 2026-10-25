@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Volunteer Review | CampusHub{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">EVENT OPERATIONS</p>
+  <h1>Volunteer applications</h1>
+  <p>Review applicants for events you manage.</p>
+</section>
+<section class="event-list">
+  {% for application in applications %}
+  <article class="event-card">
+    <p class="eyebrow">{{ application.status|replace('_', ' ')|title }}</p>
+    <h2>{{ application.event.title }}</h2>
+    <p><strong>Applicant:</strong> {{ application.user.full_name }} ({{ application.user.email }})</p>
+    <p>{{ application.message or "No message provided." }}</p>
+    {% if application.status == "pending" %}
+    <div class="button-row">
+      <form method="post" action="{{ url_for('volunteers.decision', application_id=application.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="approve">
+        <button class="button button-primary" type="submit">Approve</button>
+      </form>
+      <form method="post" action="{{ url_for('volunteers.decision', application_id=application.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="reject">
+        <button class="button button-secondary" type="submit">Reject</button>
+      </form>
+    </div>
+    {% endif %}
+  </article>
+  {% else %}
+  <p>No volunteer applications to review.</p>
+  {% endfor %}
+</section>
+{% endblock %}

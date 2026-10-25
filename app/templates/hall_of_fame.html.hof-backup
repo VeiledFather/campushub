@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+.hof-page { max-width: 1050px; margin: 0 auto; padding: 24px 0 50px; }
+.hof-hero { padding: 30px 0; }
+.hof-eyebrow { color: #a78bfa; letter-spacing: 4px; font-size: 12px; font-weight: 800; }
+.hof-hero h1 { font-size: clamp(34px, 6vw, 54px); margin: 10px 0; }
+.hof-hero p { opacity: .7; max-width: 580px; }
+.hof-podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: end; margin: 32px 0; }
+.hof-winner { text-align: center; padding: 24px 12px; border: 1px solid #34303e; border-radius: 20px; background: linear-gradient(150deg, #211b2e, #111014); min-width: 0; }
+.hof-winner.first { border-color: #b99aff; padding-top: 36px; padding-bottom: 36px; box-shadow: 0 0 35px #a78bfa18; }
+.hof-medal { font-size: 34px; }
+.hof-rank { color: #bda5ff; font-size: 12px; font-weight: 800; letter-spacing: 2px; margin: 10px 0; }
+.hof-name { font-size: 17px; font-weight: 800; overflow-wrap: anywhere; }
+.hof-count { font-size: 26px; font-weight: 900; margin-top: 12px; }
+.hof-caption { opacity: .65; font-size: 12px; }
+.hof-table-wrap { border: 1px solid #34303e; border-radius: 18px; overflow-x: auto; background: #111014; }
+.hof-table { width: 100%; border-collapse: collapse; min-width: 490px; }
+.hof-table th { color: #bda5ff; text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
+.hof-table th, .hof-table td { padding: 16px; text-align: left; border-bottom: 1px solid #302b38; }
+.hof-table tbody tr:last-child td { border-bottom: 0; }
+.hof-table tbody tr:hover { background: #a78bfa0d; }
+.hof-number { color: #bda5ff; font-weight: 900; }
+.hof-empty { padding: 45px 20px; text-align: center; border: 1px dashed #51465f; border-radius: 18px; }
+@media (max-width: 560px) {
+  .hof-podium { gap: 7px; }
+  .hof-winner { padding: 17px 6px; border-radius: 13px; }
+  .hof-winner.first { padding-top: 25px; padding-bottom: 25px; }
+  .hof-name { font-size: 13px; }
+  .hof-medal { font-size: 27px; }
+  .hof-count { font-size: 21px; }
+}
+</style>
+
+<div class="hof-page">
+  <header class="hof-hero">
+    <div class="hof-eyebrow">CAMPUSHUB · STUDENT SPOTLIGHT</div>
+    <h1>Hall of <span style="color:#bda5ff;">Fame.</span></h1>
+    <p>The students who show up, participate, and make campus life unforgettable.</p>
+  </header>
+
+  {% if rankings %}
+    <section class="hof-podium">
+      {% set podium = [
+        (rankings[1] if rankings|length > 1 else none, '🥈', '2ND PLACE', false),
+        (rankings[0], '🏆', 'CHAMPION', true),
+        (rankings[2] if rankings|length > 2 else none, '🥉', '3RD PLACE', false)
+      ] %}
+      {% for student, medal, label, first in podium %}
+        {% if student %}
+          <article class="hof-winner {{ 'first' if first else '' }}">
+            <div class="hof-medal">{{ medal }}</div>
+            <div class="hof-rank">{{ label }}</div>
+            <div class="hof-name">{{ student.student_name or 'Campus student' }}</div>
+            <div class="hof-count">{{ student.check_ins }}</div>
+            <div class="hof-caption">verified check-ins</div>
+            <div class="hof-caption" style="margin-top:8px;">{{ student.events_attended }} events attended</div>
+          </article>
+        {% endif %}
+      {% endfor %}
+    </section>
+
+    <h2 style="margin: 34px 0 16px;">The rankings <span style="opacity:.5;font-size:14px;">· TOP 100</span></h2>
+    <div class="hof-table-wrap">
+      <table class="hof-table">
+        <thead><tr><th>Rank</th><th>Student</th><th>Check-ins</th><th>Events</th></tr></thead>
+        <tbody>
+          {% for student in rankings %}
+            <tr>
+              <td class="hof-number">
+                {% if loop.index == 1 %}🏆 01
+                {% elif loop.index == 2 %}🥈 02
+                {% elif loop.index == 3 %}🥉 03
+                {% else %}{{ '%02d'|format(loop.index) }}{% endif %}
+              </td>
+              <td><strong>{{ student.student_name or 'Campus student' }}</strong></td>
+              <td>{{ student.check_ins }}</td>
+              <td>{{ student.events_attended }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <section class="hof-empty">
+      <div style="font-size:42px;">🏆</div>
+      <h2>Your campus legends start here.</h2>
+      <p style="opacity:.7;">Students will appear here after their first verified event check-in.</p>
+    </section>
+  {% endif %}
+</div>
+{% endblock %}

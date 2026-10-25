@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Event Check-in | CampusHub{% endblock %}
+{% block content %}
+<section class="form-card">
+  <p class="eyebrow">EVENT OPERATIONS</p>
+  <h1>Ticket check-in</h1>
+  <p>Enter the token encoded in the attendee's QR code.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="token">QR ticket token</label>
+    <input id="token" name="token" required autocomplete="off">
+    <button class="button button-primary" type="submit">Validate and check in</button>
+  </form>
+</section>
+{% endblock %}

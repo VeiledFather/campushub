@@ -1,0 +1,355 @@
+from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import UserMixin
+from sqlalchemy import UniqueConstraint, CheckConstraint
+
+from app.extensions import db
+
+
+ROLES = (
+    "student",
+    "teacher",
+    "volunteer",
+    "organizer",
+    "admin",
+    "super_admin",
+    "developer",
+)
+
+EVENT_STATUSES = (
+    "draft",
+    "pending_approval",
+    "approved",
+    "published",
+    "ongoing",
+    "completed",
+    "cancelled",
+)
+
+
+class TimestampMixin:
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime, nullable=False,
+        default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class User(UserMixin, TimestampMixin, db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    full_name = db.Column(db.String(160), nullable=False)
+    email = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(30), nullable=False, default="student", index=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    is_suspended = db.Column(db.Boolean, nullable=False, default=False)
+
+    student = db.relationship(
+        "Student", back_populates="user", uselist=False,
+        cascade="all, delete-orphan"
+    )
+    teacher = db.relationship(
+        "Teacher", back_populates="user", uselist=False,
+        cascade="all, delete-orphan"
+    )
+
+    def set_password(self, password):
+        if not password or len(password) < 12:
+            raise ValueError("Password must contain at least 12 characters.")
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_authenticated(self):
+        return True
+
+    def get_id(self):
+        return str(self.id)
+
+    def __repr__(self):
+        return f"<User {self.id}: {self.email}>"
+
+
+class Department(TimestampMixin, db.Model):
+    __tablename__ = "departments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False)
+    code = db.Column(db.String(30), nullable=False, unique=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+
+    batches = db.relationship("Batch", back_populates="department")
+
+
+class Batch(TimestampMixin, db.Model):
+    __tablename__ = "batches"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    academic_year = db.Column(db.String(30), nullable=False)
+    start_date = db.Column(db.Date, nullable=True)
+    end_date = db.Column(db.Date, nullable=True)
+    id_expiry_date = db.Column(db.Date, nullable=True)
+    home_room = db.Column(db.String(100), nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+
+    department_id = db.Column(
+        db.Integer, db.ForeignKey("departments.id"), nullable=False
+    )
+    department = db.relationship("Department", back_populates="batches")
+    students = db.relationship("Student", back_populates="batch")
+    teachers = db.relationship("Teacher", back_populates="homeroom_batch")
+
+
+class Student(TimestampMixin, db.Model):
+    __tablename__ = "students"
+
+    id = db.Column(db.Integer, primary_key=True)
+    campus_id = db.Column(db.String(80), nullable=False, unique=True)
+    college_id = db.Column(db.String(80), nullable=False, unique=True)
+    id_verified = db.Column(db.Boolean, nullable=False, default=False)
+    campus_id_active = db.Column(db.Boolean, nullable=False, default=True)
+    id_expiry_override = db.Column(db.Date, nullable=True)
+
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True
+    )
+    batch_id = db.Column(db.Integer, db.ForeignKey("batches.id"), nullable=True)
+
+    user = db.relationship("User", back_populates="student")
+    batch = db.relationship("Batch", back_populates="students")
+
+
+class Teacher(TimestampMixin, db.Model):
+    __tablename__ = "teachers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    faculty_id = db.Column(db.String(80), nullable=False, unique=True)
+    official_email = db.Column(db.String(255), nullable=False, unique=True)
+    faculty_role = db.Column(db.String(100), nullable=True)
+    id_verified = db.Column(db.Boolean, nullable=False, default=False)
+
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True
+    )
+    homeroom_batch_id = db.Column(
+        db.Integer, db.ForeignKey("batches.id"), nullable=True
+    )
+
+    user = db.relationship("User", back_populates="teacher")
+    homeroom_batch = db.relationship("Batch", back_populates="teachers")
+
+
+class Venue(TimestampMixin, db.Model):
+    __tablename__ = "venues"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False, unique=True)
+    location = db.Column(db.String(255), nullable=True)
+    capacity = db.Column(db.Integer, nullable=False)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    is_event_venue = db.Column(db.Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        CheckConstraint("capacity > 0", name="ck_venue_positive_capacity"),
+    )
+
+    events = db.relationship("Event", back_populates="venue")
+
+
+class Event(TimestampMixin, db.Model):
+    __tablename__ = "events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_code = db.Column(db.String(40), nullable=False, unique=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=False, default="")
+    event_type = db.Column(db.String(80), nullable=False, default="general")
+
+    venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
+    host_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+    start_time = db.Column(db.DateTime, nullable=False)
+    end_time = db.Column(db.DateTime, nullable=False)
+    registration_start = db.Column(db.DateTime, nullable=True)
+    registration_end = db.Column(db.DateTime, nullable=True)
+    max_participants = db.Column(db.Integer, nullable=True)
+
+    ticket_required = db.Column(db.Boolean, nullable=False, default=True)
+    approval_required = db.Column(db.Boolean, nullable=False, default=True)
+    is_public = db.Column(db.Boolean, nullable=False, default=True)
+    status = db.Column(db.String(30), nullable=False, default="draft", index=True)
+
+    food_requirements = db.Column(db.Text, nullable=True)
+    equipment_requirements = db.Column(db.Text, nullable=True)
+    cancellation_reason = db.Column(db.Text, nullable=True)
+    published_at = db.Column(db.DateTime, nullable=True)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    cancelled_at = db.Column(db.DateTime, nullable=True)
+
+    venue = db.relationship("Venue", back_populates="events")
+    host = db.relationship("User", foreign_keys=[host_user_id])
+    registrations = db.relationship("Registration", back_populates="event")
+
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="ck_event_valid_times"),
+        CheckConstraint(
+            "max_participants IS NULL OR max_participants > 0",
+            name="ck_event_positive_capacity"
+        ),
+    )
+
+
+class Registration(TimestampMixin, db.Model):
+    __tablename__ = "registrations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(30), nullable=False, default="registered")
+    registered_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey("students.id"), nullable=False)
+
+    event = db.relationship("Event", back_populates="registrations")
+    student = db.relationship("Student")
+    ticket = db.relationship(
+        "Ticket", back_populates="registration", uselist=False,
+        cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "student_id", name="uq_event_student"),
+    )
+
+
+class Ticket(TimestampMixin, db.Model):
+    __tablename__ = "tickets"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_code = db.Column(db.String(100), nullable=False, unique=True)
+    qr_token = db.Column(db.String(255), nullable=False, unique=True)
+    status = db.Column(db.String(30), nullable=False, default="active")
+    expires_at = db.Column(db.DateTime, nullable=True)
+    checked_in_at = db.Column(db.DateTime, nullable=True)
+
+    registration_id = db.Column(
+        db.Integer, db.ForeignKey("registrations.id"), nullable=False, unique=True
+    )
+    registration = db.relationship("Registration", back_populates="ticket")
+
+
+class VolunteerApplication(TimestampMixin, db.Model):
+    __tablename__ = "volunteer_applications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(30), nullable=False, default="pending")
+    message = db.Column(db.Text, nullable=True)
+
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+    event = db.relationship("Event")
+    user = db.relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "user_id", name="uq_volunteer_application"),
+    )
+
+
+class Announcement(TimestampMixin, db.Model):
+    __tablename__ = "announcements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    audience_type = db.Column(db.String(30), nullable=False, default="college")
+    audience_id = db.Column(db.Integer, nullable=True)
+    is_published = db.Column(db.Boolean, nullable=False, default=False)
+    published_at = db.Column(db.DateTime, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+    creator_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    related_event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=True)
+
+    creator = db.relationship("User")
+    related_event = db.relationship("Event")
+
+
+class Notification(TimestampMixin, db.Model):
+    __tablename__ = "notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    notification_type = db.Column(db.String(60), nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, nullable=False, default=False)
+    read_at = db.Column(db.DateTime, nullable=True)
+    email_status = db.Column(db.String(30), nullable=False, default="pending")
+    email_sent_at = db.Column(db.DateTime, nullable=True)
+    email_error = db.Column(db.Text, nullable=True)
+
+    recipient_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    related_event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=True)
+
+    recipient = db.relationship("User")
+    related_event = db.relationship("Event")
+
+
+class Review(TimestampMixin, db.Model):
+    __tablename__ = "reviews"
+
+    id = db.Column(db.Integer, primary_key=True)
+    rating = db.Column(db.Integer, nullable=False)
+    feedback = db.Column(db.Text, nullable=True)
+
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey("students.id"), nullable=False)
+
+    event = db.relationship("Event")
+    student = db.relationship("Student")
+
+    __table_args__ = (
+        CheckConstraint("rating >= 1 AND rating <= 5", name="ck_review_rating"),
+        UniqueConstraint("event_id", "student_id", name="uq_event_review"),
+    )
+
+
+class Certificate(TimestampMixin, db.Model):
+    __tablename__ = "certificates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    certificate_code = db.Column(db.String(100), nullable=False, unique=True)
+    file_path = db.Column(db.String(500), nullable=True)
+    issued_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey("students.id"), nullable=False)
+
+    event = db.relationship("Event")
+    student = db.relationship("Student")
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "student_id", name="uq_event_certificate"),
+    )
+
+
+class EvAiSavedPlan(TimestampMixin, db.Model):
+    __tablename__ = "evai_saved_plans"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    plan_json = db.Column(db.Text, nullable=False)
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    user = db.relationship("User")

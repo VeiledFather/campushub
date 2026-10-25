@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Certificate Assignment | CampusHub{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <header class="mb-4">
+    <p class="text-uppercase small mb-1">CampusHub · Event Management</p>
+<h1>Certificate Assignment</h1>
+    <p>Select an event to issue certificates to its eligible participants.</p>
+  </header>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ 'danger' if category == 'error' else category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="get" class="card p-3 mb-4">
+    <label for="event_id" class="form-label">Choose event</label>
+    <select class="form-select mb-3" name="event_id" id="event_id" required>
+      <option value="">Select an event</option>
+      {% for event in manageable_events %}
+        <option value="{{ event.id }}"
+          {% if selected_event and selected_event.id == event.id %}selected{% endif %}>
+          {{ event.title }} · #{{ event.id }}
+        </option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-dark" type="submit">Load participants</button>
+  </form>
+
+  {% if selected_event %}
+    <section class="card p-3">
+      <h2 class="h4">{{ selected_event.title }}</h2>
+      <p>Issue certificates to eligible participants who do not already have one.</p>
+      <form method="post">
+        <input type="hidden" name="event_id" value="{{ selected_event.id }}">
+        <input type="hidden" name="action" value="issue_all">
+        <button class="btn btn-primary" type="submit"
+          onclick="return confirm('Issue certificates to all eligible participants without an existing certificate?')">
+          Issue certificates to all eligible participants
+        </button>
+      </form>
+      <hr>
+      <p class="small text-muted">
+        Individual selection and participant details depend on the existing registration model.
+        Existing certificates are intended to be protected against duplicate issuance.
+      </p>
+    </section>
+  {% endif %}
+</div>
+{% endblock %}

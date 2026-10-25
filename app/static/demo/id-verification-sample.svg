@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560" viewBox="0 0 900 560">
+<rect width="900" height="560" rx="28" fill="#f7f4ff"/>
+<rect x="0" y="0" width="900" height="120" rx="28" fill="#27213d"/>
+<rect x="0" y="88" width="900" height="32" fill="#27213d"/>
+<text x="42" y="58" fill="#ffffff" font-family="Arial,sans-serif" font-size="30" font-weight="bold">CAMPUSHUB · STUDENT ID</text>
+<text x="42" y="94" fill="#d9cff7" font-family="Arial,sans-serif" font-size="18">DEMO CARD — NOT A REAL ID</text>
+<rect x="42" y="160" width="165" height="190" rx="12" fill="#ded7ef"/>
+<circle cx="124" cy="220" r="42" fill="#8c7bb6"/>
+<path d="M65 326 Q124 245 183 326Z" fill="#8c7bb6"/>
+<text x="245" y="180" fill="#6f638e" font-family="Arial,sans-serif" font-size="18">STUDENT NAME</text>
+<text x="245" y="218" fill="#27213d" font-family="Arial,sans-serif" font-size="32" font-weight="bold">Demo Student</text>
+<text x="245" y="270" fill="#6f638e" font-family="Arial,sans-serif" font-size="18">CAMPUS ID</text>
+<text x="245" y="306" fill="#27213d" font-family="monospace" font-size="27">CAMP-DEMO-001</text>
+<text x="245" y="355" fill="#6f638e" font-family="Arial,sans-serif" font-size="18">COLLEGE ID</text>
+<text x="245" y="390" fill="#27213d" font-family="monospace" font-size="27">COLL-DEMO-001</text>
+<rect x="42" y="430" width="816" height="2" fill="#d3c9e9"/>
+<text x="42" y="472" fill="#6f638e" font-family="Arial,sans-serif" font-size="19">SAMPLE CARD FOR LOCAL WORKFLOW DEMONSTRATION ONLY</text>
+<text x="42" y="512" fill="#6f638e" font-family="Arial,sans-serif" font-size="16">The teacher must inspect the card and explicitly approve the request.</text>
+</svg>

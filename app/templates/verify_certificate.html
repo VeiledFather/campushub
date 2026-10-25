@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Certificate Verification · CampusHub{% endblock %}
+{% block content %}
+<div style="max-width:760px;margin:48px auto;padding:28px;border:1px solid #c6a45b;border-radius:16px;background:#fffdf6;color:#282329">
+  <p style="color:#a50021;font-weight:bold">CAMPUSHUB · CERTIFICATE VERIFICATION</p>
+  {% if certificate %}
+    <h1 style="color:#760019">Certificate record found</h1>
+    <p>This certificate ID matches a record in CampusHub.</p>
+    <p><strong>Certificate ID:</strong> {{ certificate.certificate_code }}</p>
+    <p><strong>Event:</strong> {{ certificate.event.title }}</p>
+    <p><strong>Status:</strong> Issued record found</p>
+  {% else %}
+    <h1 style="color:#760019">Certificate not found</h1>
+    <p>No certificate with that ID could be verified.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#100e18">
+  <title>{% block title %}CampusHub{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/evai-responsive.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/campushub-premium.css') }}">
+
+  <script>
+  document.documentElement.dataset.theme = "dark";
+  try { localStorage.removeItem("campushub-theme"); } catch (_) {}
+</script>
+
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{ url_for('main.home') }}">
+    <span class="brand-mark">C</span>
+    <span>Campus<span class="brand-light">Hub</span><small>YOUR CAMPUS. CONNECTED.</small></span>
+  </a>
+  <nav class="nav-links campushub-nav-v2" aria-label="Main navigation">
+    <a class="nav-home-link" href="{{ url_for('main.home') }}">Discover</a>
+    <a class="nav-home-link" href="{{ url_for('events.index') }}">Events</a>
+
+    {% if current_user.is_authenticated %}
+    <details class="nav-dropdown">
+      <summary>Explore <span class="nav-chevron">⌄</span></summary>
+      <div class="nav-menu">
+        <a href="{{ url_for('main.hall_of_fame') }}">Hall of Fame</a>
+        {% if current_user.role == 'student' %}
+        <a href="{{ url_for('main.certificates') }}">My Certificates</a>
+        {% endif %}
+      </div>
+    </details>
+
+    <details class="nav-dropdown">
+      <summary>EvAi <span class="nav-chevron">⌄</span></summary>
+      <div class="nav-menu">
+        <a href="{{ url_for('evai.planner_page') }}">EvAi Planner</a>
+        <a href="{{ url_for('evai.saved_plans') }}">Saved Plans</a>
+      </div>
+    </details>
+
+    <a href="{{ url_for('main.dashboard') }}">Dashboard</a>
+    <a class="nav-notifications" href="{{ url_for('events.notification_inbox') }}">
+      Notifications{% if unread_notification_count %}<span class="nav-count">{{ unread_notification_count }}</span>{% endif %}
+    </a>
+
+    {% if current_user.role == 'teacher' %}
+    <details class="nav-dropdown">
+      <summary>Academics <span class="nav-chevron">⌄</span></summary>
+      <div class="nav-menu">
+        <a href="{{ url_for('academic.teacher_workspace') }}">Academic Management</a>
+        <a href="{{ url_for('academic.teacher_id_verification') }}">ID Verification</a>
+      </div>
+    </details>
+    {% endif %}
+
+    {% if current_user.role in ['admin', 'super_admin', 'developer'] %}
+    <details class="nav-dropdown">
+      <summary>Administration <span class="nav-chevron">⌄</span></summary>
+      <div class="nav-menu">
+        <a href="{{ url_for('academic.index') }}">Academic Admin</a>
+        <a href="{{ url_for('events.review_queue') }}">Review Events</a>
+      </div>
+    </details>
+    {% endif %}
+
+    {% if current_user.role in ['admin', 'super_admin', 'developer', 'organizer', 'teacher'] %}
+    <a href="{{ url_for('main.event_analytics') }}">Analytics</a>
+    {% endif %}
+
+    {% if current_user.role == 'student' %}
+    <details class="nav-dropdown">
+      <summary>My Campus <span class="nav-chevron">⌄</span></summary>
+      <div class="nav-menu">
+        <a href="{{ url_for('academic.student_id_verification') }}">Verify Student ID</a>
+        <a href="{{ url_for('volunteers.mine') }}">My Volunteer Applications</a>
+        <a href="{{ url_for('volunteers.assignments') }}">My Assignments</a>
+      </div>
+    </details>
+    {% endif %}
+
+    {% if current_user.role in ['organizer', 'teacher', 'admin', 'super_admin', 'developer'] %}
+    <details class="nav-dropdown">
+      <summary>Volunteers <span class="nav-chevron">⌄</span></summary>
+      <div class="nav-menu">
+        <a href="{{ url_for('volunteers.review') }}">Volunteer Review</a>
+      </div>
+    </details>
+    <a class="nav-certificate-link" href="{{ url_for('main.organizer_certificate_manager') }}">Certificates</a>
+    {% endif %}
+
+    <span class="role-pill">{{ current_user.role|replace('_', ' ')|title }}</span>
+    <form method="post" action="{{ url_for('auth.logout') }}" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="nav-button" type="submit">Log out</button>
+    </form>
+    {% else %}
+    <a href="{{ url_for('auth.login') }}">Log in</a>
+    <a class="button button-small" href="{{ url_for('auth.register') }}">Join CampusHub</a>
+    {% endif %}
+  
+    
+
+  </nav>
+</header>
+
+<main class="page">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <section class="flash-stack" aria-live="polite">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="footer">
+  <div><strong>CampusHub</strong> · Built for campus life.</div>
+  <div>Powered by <strong class="evai">EvAi</strong></div>
+</footer>
+
+{% if current_user.is_authenticated %}
+<a id="evai-floating-launcher"
+   class="evai-floating-launcher"
+   href="#evai-chat-panel"
+   aria-label="Open EvAi Assistant"
+   title="Open EvAi Assistant">
+  <span class="evai-floating-icon" aria-hidden="true">✦</span>
+  <span class="evai-floating-label"><strong>EvAi</strong><small>CampusHub assistant</small></span>
+  <span class="evai-drag-handle" aria-hidden="true">⠿</span>
+</a>
+<script>
+(() => {
+  const button = document.getElementById('evai-floating-launcher');
+  const panel = document.getElementById('evai-chat-panel');
+  if (!button || !panel || button.dataset.fixedLauncher === '1') return;
+  button.dataset.fixedLauncher = '1';
+
+  const margin = () => innerWidth <= 600 ? 12 : 24;
+  let dragging = false, moved = false, pointerId = null;
+  let sx = 0, sy = 0, ox = 0, oy = 0, suppressClick = false;
+
+  function place(x, y) {
+    const r = button.getBoundingClientRect(), m = margin();
+    x = Math.max(m, Math.min(x, innerWidth - r.width - m));
+    y = Math.max(m, Math.min(y, innerHeight - r.height - m));
+    Object.assign(button.style, {
+      position: 'fixed', left: x + 'px', top: y + 'px',
+      right: 'auto', bottom: 'auto', margin: '0',
+      transform: 'none', zIndex: '2147483000'
+    });
+  }
+
+  function bottomRight() {
+    const r = button.getBoundingClientRect(), m = margin();
+    place(innerWidth - r.width - m, innerHeight - r.height - m);
+  }
+
+  // Ignore stale saved positions; always start at the bottom-right.
+  try { localStorage.removeItem('campushub-evai-launcher-position'); } catch (_) {}
+  requestAnimationFrame(bottomRight);
+
+  button.addEventListener('click', event => {
+    if (suppressClick) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    event.preventDefault();
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) {
+      panel.setAttribute('aria-hidden', 'false');
+      const input = document.getElementById('evai-chat-input');
+      if (input) setTimeout(() => input.focus(), 100);
+    } else {
+      panel.setAttribute('aria-hidden', 'true');
+    }
+  }, true);
+
+  button.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    dragging = true;
+    moved = false;
+    pointerId = event.pointerId;
+    sx = event.clientX; sy = event.clientY;
+    const r = button.getBoundingClientRect();
+    ox = r.left; oy = r.top;
+    button.style.cursor = 'grabbing';
+  });
+
+  window.addEventListener('pointermove', event => {
+    if (!dragging || event.pointerId !== pointerId) return;
+    const dx = event.clientX - sx, dy = event.clientY - sy;
+    if (Math.abs(dx) + Math.abs(dy) > 5) moved = true;
+    if (!moved) return;
+    place(ox + dx, oy + dy);
+    event.preventDefault();
+  }, { passive: false });
+
+  function endDrag(event) {
+    if (!dragging || (event && event.pointerId !== pointerId)) return;
+    dragging = false;
+    pointerId = null;
+    button.style.cursor = 'grab';
+    if (moved) {
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 300);
+    }
+  }
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('resize', () => {
+    // Keep a dragged position within the resized viewport.
+    const r = button.getBoundingClientRect();
+    place(r.left, r.top);
+  });
+  window.addEventListener('orientationchange', () => setTimeout(() => {
+    const r = button.getBoundingClientRect();
+    place(r.left, r.top);
+  }, 200));
+})();
+</script>
+{% endif %}
+
+  {% include "evai/assistant_widget.html" %}
+
+
+
+</body>
+</html>

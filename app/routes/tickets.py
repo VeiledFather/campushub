@@ -1,0 +1,167 @@
+from base64 import b64encode
+from datetime import datetime
+from functools import wraps
+
+import qrcode
+from qrcode.image.svg import SvgPathImage
+from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+
+from app.extensions import db
+from app.models import Registration, Ticket, VolunteerApplication
+
+tickets_bp = Blueprint("tickets", __name__, url_prefix="/tickets")
+
+ADMIN_ROLES = {"admin", "super_admin", "developer"}
+EVENT_STAFF_ROLES = ADMIN_ROLES | {"teacher", "organizer", "student", "volunteer"}
+
+
+def roles_required(*roles):
+    def decorator(view):
+        @wraps(view)
+        @login_required
+        def wrapped(*args, **kwargs):
+            if current_user.role not in roles:
+                abort(403)
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+@tickets_bp.get("/registration/<int:registration_id>")
+@login_required
+def view_ticket(registration_id):
+    registration = db.session.get(Registration, registration_id)
+    if registration is None:
+        abort(404)
+
+    event = registration.event
+    owns_ticket = (
+        current_user.role == "student"
+        and registration.student.user_id == current_user.id
+    )
+    manages_event = (
+        current_user.role in ADMIN_ROLES
+        or (
+            current_user.role in {"teacher", "organizer"}
+            and event.host_user_id == current_user.id
+        )
+    )
+
+    if not owns_ticket and not manages_event:
+        abort(403)
+
+    ticket = registration.ticket
+    if ticket is None:
+        abort(404)
+
+    qr = qrcode.QRCode(box_size=8, border=4)
+    qr.add_data(ticket.qr_token)
+    qr.make(fit=True)
+    svg = qr.make_image(image_factory=SvgPathImage).to_string(
+        encoding="unicode"
+    )
+    qr_svg_b64 = b64encode(svg.encode("utf-8")).decode("ascii")
+
+    return render_template(
+        "tickets/view.html",
+        ticket=ticket,
+        registration=registration,
+        event=event,
+        qr_svg_b64=qr_svg_b64,
+    )
+
+
+@tickets_bp.route("/check-in", methods=["GET", "POST"])
+@roles_required(*EVENT_STAFF_ROLES)
+def check_in():
+    if current_user.role in {"student", "volunteer"}:
+        has_approved_assignment = VolunteerApplication.query.filter_by(
+            user_id=current_user.id,
+            status="approved",
+        ).first() is not None
+        if not has_approved_assignment:
+            abort(403)
+
+    if request.method == "GET":
+        return render_template("tickets/check_in.html")
+
+    token = request.form.get("token", "").strip()
+    if not token:
+        flash("Enter or scan a ticket token.", "error")
+        return redirect(url_for("tickets.check_in"))
+
+    if current_user.role in {"student", "volunteer"}:
+        approved_event_ids = (
+            db.session.query(VolunteerApplication.event_id)
+            .filter_by(user_id=current_user.id, status="approved")
+        )
+        ticket = (
+            Ticket.query
+            .join(Registration)
+            .filter(
+                Ticket.qr_token == token,
+                Registration.event_id.in_(approved_event_ids),
+            )
+            .first()
+        )
+    else:
+        ticket = Ticket.query.filter_by(qr_token=token).first()
+
+    if ticket is None:
+        flash("Invalid ticket or no access to this event.", "error")
+        return redirect(url_for("tickets.check_in"))
+
+    event = ticket.registration.event
+
+    is_admin = current_user.role in ADMIN_ROLES
+    is_event_host = (
+        current_user.role in {"teacher", "organizer"}
+        and event.host_user_id == current_user.id
+    )
+    is_approved_volunteer = VolunteerApplication.query.filter_by(
+        event_id=event.id,
+        user_id=current_user.id,
+        status="approved",
+    ).first() is not None
+
+    if not (is_admin or is_event_host or is_approved_volunteer):
+        abort(403)
+
+    now = datetime.utcnow()
+
+    if ticket.status != "active" or ticket.checked_in_at is not None:
+        flash("This ticket is inactive or has already been used.", "error")
+        return redirect(url_for("tickets.check_in"))
+
+    if ticket.expires_at is not None and ticket.expires_at <= now:
+        ticket.status = "expired"
+        db.session.commit()
+        flash("This ticket has expired.", "error")
+        return redirect(url_for("tickets.check_in"))
+
+    if ticket.registration.status != "registered":
+        flash("The registration is not active.", "error")
+        return redirect(url_for("tickets.check_in"))
+
+    # Conditional update prevents two simultaneous scans from checking in twice.
+    updated = Ticket.query.filter_by(
+        id=ticket.id,
+        status="active",
+        checked_in_at=None,
+    ).update(
+        {
+            "status": "checked_in",
+            "checked_in_at": now,
+        },
+        synchronize_session=False,
+    )
+
+    if updated != 1:
+        db.session.rollback()
+        flash("This ticket has already been used.", "error")
+        return redirect(url_for("tickets.check_in"))
+
+    db.session.commit()
+    flash(f"Check-in successful for {ticket.registration.student.user.full_name}.", "success")
+    return redirect(url_for("tickets.check_in"))

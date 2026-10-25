@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Join CampusHub{% endblock %}
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-aside"><div class="eyebrow">YOUR STORY, YOUR CAMPUS</div><h1>There's a place<br>for <span class="gradient-text">you here.</span></h1><p>Discover what's happening, connect with your community, and turn your ideas into campus moments.</p><div class="auth-aside-mark">C<span>H</span></div></div>
+  <div class="auth-card"><div class="eyebrow">START SOMETHING</div><h2>Create your account</h2><p class="muted">Student accounts can be created here. Staff roles are assigned by authorised administrators.</p>
+<form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Full name<input type="text" name="full_name" placeholder="Your full name" autocomplete="name" required maxlength="160"></label>
+      <label>Date of birth<input type="date" name="date_of_birth" required max="{{ today_date if today_date is defined else '' }}"></label>
+      <label>Course<input type="text" name="course" placeholder="e.g. B.Tech Computer Science" required maxlength="120"></label>
+      <label>Academic year
+        <select name="academic_year" required>
+          <option value="">Select your academic year</option>
+          <option value="1st Year">1st Year</option>
+          <option value="2nd Year">2nd Year</option>
+          <option value="3rd Year">3rd Year</option>
+          <option value="4th Year">4th Year</option>
+          <option value="5th Year">5th Year</option>
+          <option value="Postgraduate">Postgraduate</option>
+          <option value="Other">Other</option>
+        </select>
+      </label>
+      <label>Email address<input type="email" name="email" placeholder="you@campus.edu" autocomplete="email" required maxlength="255"></label>
+      <label>Password<input type="password" name="password" placeholder="At least 12 characters" autocomplete="new-password" minlength="12" required></label>
+      <label>Confirm password<input type="password" name="confirm_password" placeholder="Enter it again" autocomplete="new-password" minlength="12" required></label>
+      <button class="button full-button" type="submit">Create account <span>↗</span></button>
+    </form>
+    <p class="auth-switch">Already registered? <a href="{{ url_for('auth.login') }}">Log in</a></p>
+    <p class="auth-switch">Already have a student account and assigned batch?
+      <a href="{{ url_for('auth.login', next=url_for('academic.student_id_verification')) }}">Log in to scan your student ID</a>
+    </p>
+  </div>
+</section>
+{% endblock %}
