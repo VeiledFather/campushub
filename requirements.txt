@@ -12,3 +12,5 @@ APScheduler
 google-genai
 gunicorn
 pytest
+
+PyMySQL
